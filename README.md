@@ -1,3 +1,7 @@
+<p align="center">
+   <img width="512" height="128" alt="BicerinMatrixName512" src="https://github.com/user-attachments/assets/152255c3-e789-4645-ab11-5893b9570d55" />
+</p>
+
 # Bicerin Matrix
 
 Bicerin is an early-stage, purpose-built [Matrix](https://matrix.org) homeserver written in Rust. Unlike general-purpose homeservers (e.g. Synapse, Dendrite, Conduit), Bicerin is **deliberately narrow**: it implements a single-tenant, **unfederated** Matrix homeserver optimized for using Matrix bridges. It is designed to make using Matrix bridges as easy as possible without requiring unnecessary Matrix server-to-server federation bloat.
