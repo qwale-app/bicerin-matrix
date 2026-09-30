@@ -1,0 +1,28 @@
+[package]
+name = "bicerin-http"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+
+bicerin-types = { path = "../bicerin-types" }
+bicerin-error = { path = "../bicerin-error" }
+bicerin-config = { path = "../bicerin-config" }
+bicerin-storage = { path = "../bicerin-storage" }
+bicerin-auth = { path = "../bicerin-auth" }
+bicerin-rooms = { path = "../bicerin-rooms" }
+bicerin-events = { path = "../bicerin-events" }
+bicerin-sync = { path = "../bicerin-sync" }
+bicerin-media = { path = "../bicerin-media" }

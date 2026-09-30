@@ -1,0 +1,22 @@
+[package]
+name = "bicerin-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bicerin-types = { path = "../bicerin-types" }
+bicerin-error = { path = "../bicerin-error" }
+bicerin-config = { path = "../bicerin-config" }
+sqlx = { workspace = true }
+mongodb = { workspace = true }
+bson = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+regex = { workspace = true }
+futures = { workspace = true }

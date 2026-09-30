@@ -1,0 +1,19 @@
+[package]
+name = "bicerin-media"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+sqlx = { workspace = true }
+
+bicerin-error = { path = "../bicerin-error" }
+bicerin-storage = { path = "../bicerin-storage" }
