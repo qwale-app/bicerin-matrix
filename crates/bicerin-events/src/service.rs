@@ -1,5 +1,5 @@
-use bicerin_storage::events::*;
 use bicerin_error::{BicerinError, BicerinResult};
+use bicerin_storage::events::*;
 use serde_json::Value;
 
 pub struct EventService {
@@ -8,7 +8,9 @@ pub struct EventService {
 }
 
 impl EventService {
-    pub fn new(store: bicerin_storage::Store, server_name: String) -> Self { Self { store, server_name } }
+    pub fn new(store: bicerin_storage::Store, server_name: String) -> Self {
+        Self { store, server_name }
+    }
 
     pub async fn send_event(
         &self,
@@ -29,11 +31,21 @@ impl EventService {
             .await
             .map_err(|_| BicerinError::NotFound)?;
 
+        let power_levels =
+            bicerin_rooms::powerlevels::load_power_levels(&self.store, room_id).await?;
+        if !bicerin_rooms::powerlevels::check_send_event(&power_levels, sender, event_type) {
+            return Err(BicerinError::Forbidden);
+        }
+
         let stream_id = bicerin_storage::events::get_next_stream_id(&self.store)
             .await
             .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
-        let event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), self.server_name);
+        let event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            self.server_name
+        );
 
         let event = EventRecord {
             event_id: event_id.clone(),
@@ -84,11 +96,26 @@ impl EventService {
             .await
             .map_err(|_| BicerinError::NotFound)?;
 
+        let power_levels =
+            bicerin_rooms::powerlevels::load_power_levels(&self.store, room_id).await?;
+        if !bicerin_rooms::powerlevels::check_state_event(&power_levels, sender, event_type) {
+            return Err(BicerinError::Forbidden);
+        }
+        if event_type == "m.room.power_levels"
+            && !bicerin_rooms::powerlevels::can_change_power_levels(&power_levels, sender, &content)
+        {
+            return Err(BicerinError::Forbidden);
+        }
+
         let stream_id = bicerin_storage::events::get_next_stream_id(&self.store)
             .await
             .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
-        let event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), self.server_name);
+        let event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            self.server_name
+        );
 
         let event = EventRecord {
             event_id: event_id.clone(),
@@ -112,16 +139,21 @@ impl EventService {
             .await
             .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
-        bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-            room_id: room_id.to_string(),
-            event_type: event_type.to_string(),
-            state_key: state_key.to_string(),
-            event_id: event_id.clone(),
-            content,
-            sender: sender.to_string(),
-            stream_id,
-            updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_state(
+            &self.store,
+            &bicerin_storage::rooms::RoomStateRecord {
+                room_id: room_id.to_string(),
+                event_type: event_type.to_string(),
+                state_key: state_key.to_string(),
+                event_id: event_id.clone(),
+                content,
+                sender: sender.to_string(),
+                stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
         crate::appservice_dispatch::dispatch(&self.store, &self.server_name, &event).await;
 
@@ -142,7 +174,9 @@ impl EventService {
             from.unwrap_or(i64::MAX),
             limit,
             dir,
-        ).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
         let end_token = events.last().map(|e| e.stream_id);
         Ok((events, end_token))

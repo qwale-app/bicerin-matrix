@@ -20,5 +20,10 @@ target/
 TESTING.md
 DOCS.md
 BICERIN_MATRIX_API.md
+NOT_TESTED.txt
 designplan.txt
 todo.txt
+
+# Local MongoDB test credentials and runtime data
+.env.local
+.local-data/

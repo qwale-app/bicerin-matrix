@@ -40,7 +40,6 @@ pub struct RoomStateRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-
 use crate::db::StorageResult;
 use crate::store::Store;
 
@@ -65,24 +64,39 @@ pub async fn upsert_room_member(store: &Store, member: &RoomMemberRecord) -> Sto
     }
 }
 
-pub async fn get_room_member(store: &Store, room_id: &str, user_id: &str) -> StorageResult<RoomMemberRecord> {
+pub async fn get_room_member(
+    store: &Store,
+    room_id: &str,
+    user_id: &str,
+) -> StorageResult<RoomMemberRecord> {
     match store {
         Store::Postgres(pool) => pg::get_room_member(pool, room_id, user_id).await,
         Store::Mongo(backend) => mongo::get_room_member(&backend.database, room_id, user_id).await,
     }
 }
 
-pub async fn get_room_members(store: &Store, room_id: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+pub async fn get_room_members(
+    store: &Store,
+    room_id: &str,
+) -> StorageResult<Vec<RoomMemberRecord>> {
     match store {
         Store::Postgres(pool) => pg::get_room_members(pool, room_id).await,
         Store::Mongo(backend) => mongo::get_room_members(&backend.database, room_id).await,
     }
 }
 
-pub async fn get_room_members_by_membership(store: &Store, room_id: &str, membership: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+pub async fn get_room_members_by_membership(
+    store: &Store,
+    room_id: &str,
+    membership: &str,
+) -> StorageResult<Vec<RoomMemberRecord>> {
     match store {
-        Store::Postgres(pool) => pg::get_room_members_by_membership(pool, room_id, membership).await,
-        Store::Mongo(backend) => mongo::get_room_members_by_membership(&backend.database, room_id, membership).await,
+        Store::Postgres(pool) => {
+            pg::get_room_members_by_membership(pool, room_id, membership).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_room_members_by_membership(&backend.database, room_id, membership).await
+        }
     }
 }
 
@@ -93,6 +107,21 @@ pub async fn get_joined_rooms(store: &Store, user_id: &str) -> StorageResult<Vec
     }
 }
 
+pub async fn get_room_members_by_user_membership(
+    store: &Store,
+    user_id: &str,
+    membership: &str,
+) -> StorageResult<Vec<RoomMemberRecord>> {
+    match store {
+        Store::Postgres(pool) => {
+            pg::get_room_members_by_user_membership(pool, user_id, membership).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_room_members_by_user_membership(&backend.database, user_id, membership).await
+        }
+    }
+}
+
 pub async fn upsert_room_state(store: &Store, state: &RoomStateRecord) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::upsert_room_state(pool, state).await,
@@ -100,14 +129,24 @@ pub async fn upsert_room_state(store: &Store, state: &RoomStateRecord) -> Storag
     }
 }
 
-pub async fn get_room_state(store: &Store, room_id: &str, event_type: &str, state_key: &str) -> StorageResult<RoomStateRecord> {
+pub async fn get_room_state(
+    store: &Store,
+    room_id: &str,
+    event_type: &str,
+    state_key: &str,
+) -> StorageResult<RoomStateRecord> {
     match store {
         Store::Postgres(pool) => pg::get_room_state(pool, room_id, event_type, state_key).await,
-        Store::Mongo(backend) => mongo::get_room_state(&backend.database, room_id, event_type, state_key).await,
+        Store::Mongo(backend) => {
+            mongo::get_room_state(&backend.database, room_id, event_type, state_key).await
+        }
     }
 }
 
-pub async fn get_full_room_state(store: &Store, room_id: &str) -> StorageResult<Vec<RoomStateRecord>> {
+pub async fn get_full_room_state(
+    store: &Store,
+    room_id: &str,
+) -> StorageResult<Vec<RoomStateRecord>> {
     match store {
         Store::Postgres(pool) => pg::get_full_room_state(pool, room_id).await,
         Store::Mongo(backend) => mongo::get_full_room_state(&backend.database, room_id).await,
@@ -148,7 +187,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn upsert_room_member(pool: &sqlx::PgPool, member: &RoomMemberRecord) -> StorageResult<()> {
+    pub async fn upsert_room_member(
+        pool: &sqlx::PgPool,
+        member: &RoomMemberRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO room_members (room_id, user_id, membership, display_name, avatar_url, sender, event_id, stream_id, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
@@ -168,7 +210,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_room_member(pool: &sqlx::PgPool, room_id: &str, user_id: &str) -> StorageResult<RoomMemberRecord> {
+    pub async fn get_room_member(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        user_id: &str,
+    ) -> StorageResult<RoomMemberRecord> {
         sqlx::query_as::<_, RoomMemberRecord>(
             "SELECT room_id, user_id, membership, display_name, avatar_url, sender, event_id, stream_id, updated_at FROM room_members WHERE room_id = $1 AND user_id = $2"
         )
@@ -179,7 +225,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_room_members(pool: &sqlx::PgPool, room_id: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+    pub async fn get_room_members(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
         let members = sqlx::query_as::<_, RoomMemberRecord>(
             "SELECT room_id, user_id, membership, display_name, avatar_url, sender, event_id, stream_id, updated_at FROM room_members WHERE room_id = $1"
         )
@@ -189,7 +238,11 @@ mod pg {
         Ok(members)
     }
 
-    pub async fn get_room_members_by_membership(pool: &sqlx::PgPool, room_id: &str, membership: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+    pub async fn get_room_members_by_membership(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        membership: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
         let members = sqlx::query_as::<_, RoomMemberRecord>(
             "SELECT room_id, user_id, membership, display_name, avatar_url, sender, event_id, stream_id, updated_at FROM room_members WHERE room_id = $1 AND membership = $2"
         )
@@ -200,9 +253,12 @@ mod pg {
         Ok(members)
     }
 
-    pub async fn get_joined_rooms(pool: &sqlx::PgPool, user_id: &str) -> StorageResult<Vec<String>> {
+    pub async fn get_joined_rooms(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+    ) -> StorageResult<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT room_id FROM room_members WHERE user_id = $1 AND membership = 'join'"
+            "SELECT room_id FROM room_members WHERE user_id = $1 AND membership = 'join'",
         )
         .bind(user_id)
         .fetch_all(pool)
@@ -210,7 +266,24 @@ mod pg {
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
 
-    pub async fn upsert_room_state(pool: &sqlx::PgPool, state: &RoomStateRecord) -> StorageResult<()> {
+    pub async fn get_room_members_by_user_membership(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        membership: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
+        Ok(sqlx::query_as::<_, RoomMemberRecord>(
+            "SELECT room_id, user_id, membership, display_name, avatar_url, sender, event_id, stream_id, updated_at FROM room_members WHERE user_id = $1 AND membership = $2"
+        )
+        .bind(user_id)
+        .bind(membership)
+        .fetch_all(pool)
+        .await?)
+    }
+
+    pub async fn upsert_room_state(
+        pool: &sqlx::PgPool,
+        state: &RoomStateRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO room_state (room_id, event_type, state_key, event_id, content, sender, stream_id, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -229,7 +302,12 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_room_state(pool: &sqlx::PgPool, room_id: &str, event_type: &str, state_key: &str) -> StorageResult<RoomStateRecord> {
+    pub async fn get_room_state(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        event_type: &str,
+        state_key: &str,
+    ) -> StorageResult<RoomStateRecord> {
         sqlx::query_as::<_, RoomStateRecord>(
             "SELECT room_id, event_type, state_key, event_id, content, sender, stream_id, updated_at FROM room_state WHERE room_id = $1 AND event_type = $2 AND state_key = $3"
         )
@@ -241,7 +319,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_full_room_state(pool: &sqlx::PgPool, room_id: &str) -> StorageResult<Vec<RoomStateRecord>> {
+    pub async fn get_full_room_state(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+    ) -> StorageResult<Vec<RoomStateRecord>> {
         let states = sqlx::query_as::<_, RoomStateRecord>(
             "SELECT room_id, event_type, state_key, event_id, content, sender, stream_id, updated_at FROM room_state WHERE room_id = $1"
         )
@@ -287,25 +368,39 @@ mod mongo {
 
     pub async fn upsert_room_member(db: &Database, member: &RoomMemberRecord) -> StorageResult<()> {
         room_members(db)
-            .find_one_and_replace(doc! { "room_id": &member.room_id, "user_id": &member.user_id }, member)
+            .find_one_and_replace(
+                doc! { "room_id": &member.room_id, "user_id": &member.user_id },
+                member,
+            )
             .upsert(true)
             .await?;
         Ok(())
     }
 
-    pub async fn get_room_member(db: &Database, room_id: &str, user_id: &str) -> StorageResult<RoomMemberRecord> {
+    pub async fn get_room_member(
+        db: &Database,
+        room_id: &str,
+        user_id: &str,
+    ) -> StorageResult<RoomMemberRecord> {
         room_members(db)
             .find_one(doc! { "room_id": room_id, "user_id": user_id })
             .await?
             .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_room_members(db: &Database, room_id: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+    pub async fn get_room_members(
+        db: &Database,
+        room_id: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
         let cursor = room_members(db).find(doc! { "room_id": room_id }).await?;
         Ok(cursor.try_collect().await?)
     }
 
-    pub async fn get_room_members_by_membership(db: &Database, room_id: &str, membership: &str) -> StorageResult<Vec<RoomMemberRecord>> {
+    pub async fn get_room_members_by_membership(
+        db: &Database,
+        room_id: &str,
+        membership: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
         let cursor = room_members(db)
             .find(doc! { "room_id": room_id, "membership": membership })
             .await?;
@@ -320,6 +415,17 @@ mod mongo {
         Ok(members.into_iter().map(|m| m.room_id).collect())
     }
 
+    pub async fn get_room_members_by_user_membership(
+        db: &Database,
+        user_id: &str,
+        membership: &str,
+    ) -> StorageResult<Vec<RoomMemberRecord>> {
+        let cursor = room_members(db)
+            .find(doc! { "user_id": user_id, "membership": membership })
+            .await?;
+        Ok(cursor.try_collect().await?)
+    }
+
     pub async fn upsert_room_state(db: &Database, state: &RoomStateRecord) -> StorageResult<()> {
         room_state(db)
             .find_one_and_replace(
@@ -332,16 +438,23 @@ mod mongo {
         Ok(())
     }
 
-    pub async fn get_room_state(db: &Database, room_id: &str, event_type: &str, state_key: &str) -> StorageResult<RoomStateRecord> {
+    pub async fn get_room_state(
+        db: &Database,
+        room_id: &str,
+        event_type: &str,
+        state_key: &str,
+    ) -> StorageResult<RoomStateRecord> {
         room_state(db)
             .find_one(doc! { "room_id": room_id, "event_type": event_type, "state_key": state_key })
             .await?
             .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_full_room_state(db: &Database, room_id: &str) -> StorageResult<Vec<RoomStateRecord>> {
+    pub async fn get_full_room_state(
+        db: &Database,
+        room_id: &str,
+    ) -> StorageResult<Vec<RoomStateRecord>> {
         let cursor = room_state(db).find(doc! { "room_id": room_id }).await?;
         Ok(cursor.try_collect().await?)
     }
 }
-

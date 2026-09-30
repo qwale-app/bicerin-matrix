@@ -29,7 +29,9 @@ pub async fn create_room(
     State(state): State<AppState>,
     Json(body): Json<CreateRoomBody>,
 ) -> BicerinResult<Json<Value>> {
-    let room_version = body.room_version.unwrap_or_else(|| state.default_room_version.clone());
+    let room_version = body
+        .room_version
+        .unwrap_or_else(|| state.default_room_version.clone());
 
     let params = CreateRoomParams {
         creator: user.user_id.clone(),
@@ -44,14 +46,34 @@ pub async fn create_room(
         power_level_content_override: body.power_level_content_override,
     };
 
-    let (room_id, _event_ids) = state.rooms.create_room(params, &state.server_name).await?;
+    let (room_id, event_ids) = state.rooms.create_room(params, &state.server_name).await?;
+
+    for event_id in event_ids {
+        dispatch_persisted_appservice_event(&state, &event_id).await;
+    }
 
     for invitee in &body.invite {
         let stream_id = bicerin_storage::events::get_next_stream_id(&state.pool)
             .await
             .map_err(|e| BicerinError::Internal(e.to_string()))?;
-        if let Err(e) = state.rooms.invite_user(&room_id, &user.user_id, invitee, &state.server_name, stream_id).await {
-            tracing::warn!(error = ?e, invitee = %invitee, "failed to invite user during room creation");
+        match state
+            .rooms
+            .invite_user(
+                &room_id,
+                &user.user_id,
+                invitee,
+                &state.server_name,
+                stream_id,
+            )
+            .await
+        {
+            Ok(event_id) => {
+                dispatch_persisted_appservice_event(&state, &event_id).await;
+                state.sync_bus.notify(room_id.clone(), stream_id);
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, invitee = %invitee, "failed to invite user during room creation")
+            }
         }
     }
 
@@ -64,12 +86,18 @@ pub async fn join_room(
     Path(room_id): Path<String>,
 ) -> BicerinResult<Json<Value>> {
     if room_id.starts_with('#') {
-        return Err(BicerinError::BadRequest("room alias resolution is not implemented".to_string()));
+        return Err(BicerinError::BadRequest(
+            "room alias resolution is not implemented".to_string(),
+        ));
     }
     let stream_id = bicerin_storage::events::get_next_stream_id(&state.pool)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
-    state.rooms.join_room(&room_id, &user.user_id, &state.server_name, stream_id).await?;
+    let event_id = state
+        .rooms
+        .join_room(&room_id, &user.user_id, &state.server_name, stream_id)
+        .await?;
+    dispatch_persisted_appservice_event(&state, &event_id).await;
     state.sync_bus.notify(room_id.clone(), stream_id);
     Ok(Json(json!({ "room_id": room_id })))
 }
@@ -82,7 +110,11 @@ pub async fn leave_room(
     let stream_id = bicerin_storage::events::get_next_stream_id(&state.pool)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
-    state.rooms.leave_room(&room_id, &user.user_id, &state.server_name, stream_id).await?;
+    let event_id = state
+        .rooms
+        .leave_room(&room_id, &user.user_id, &state.server_name, stream_id)
+        .await?;
+    dispatch_persisted_appservice_event(&state, &event_id).await;
     state.sync_bus.notify(room_id, stream_id);
     Ok(Json(json!({})))
 }
@@ -101,9 +133,31 @@ pub async fn invite_user(
     let stream_id = bicerin_storage::events::get_next_stream_id(&state.pool)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
-    state.rooms.invite_user(&room_id, &user.user_id, &body.user_id, &state.server_name, stream_id).await?;
+    let event_id = state
+        .rooms
+        .invite_user(
+            &room_id,
+            &user.user_id,
+            &body.user_id,
+            &state.server_name,
+            stream_id,
+        )
+        .await?;
+    dispatch_persisted_appservice_event(&state, &event_id).await;
     state.sync_bus.notify(room_id, stream_id);
     Ok(Json(json!({})))
+}
+
+async fn dispatch_persisted_appservice_event(state: &AppState, event_id: &str) {
+    match bicerin_storage::events::get_event(&state.pool, event_id).await {
+        Ok(event) => {
+            bicerin_events::appservice_dispatch::dispatch(&state.pool, &state.server_name, &event)
+                .await
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, event_id = %event_id, "failed to load event for appservice dispatch")
+        }
+    }
 }
 
 pub async fn send_event(
@@ -114,9 +168,15 @@ pub async fn send_event(
 ) -> BicerinResult<Json<Value>> {
     let endpoint = format!("send:{}:{}", room_id, event_type);
 
-    if let Some(existing) = bicerin_storage::transactions::get_transaction(&state.pool, &user.user_id, &user.device_id, &txn_id, &endpoint)
-        .await
-        .map_err(|e| BicerinError::Internal(e.to_string()))?
+    if let Some(existing) = bicerin_storage::transactions::get_transaction(
+        &state.pool,
+        &user.user_id,
+        &user.device_id,
+        &txn_id,
+        &endpoint,
+    )
+    .await
+    .map_err(|e| BicerinError::Internal(e.to_string()))?
     {
         return Ok(Json(existing.result));
     }
@@ -127,14 +187,19 @@ pub async fn send_event(
         .await?;
     let result = json!({ "event_id": event_id });
 
-    if let Err(e) = bicerin_storage::transactions::record_transaction(&state.pool, &bicerin_storage::transactions::TransactionRecord {
-        user_id: user.user_id.clone(),
-        device_id: user.device_id.clone(),
-        txn_id,
-        endpoint,
-        result: result.clone(),
-        created_at: chrono::Utc::now(),
-    }).await {
+    if let Err(e) = bicerin_storage::transactions::record_transaction(
+        &state.pool,
+        &bicerin_storage::transactions::TransactionRecord {
+            user_id: user.user_id.clone(),
+            device_id: user.device_id.clone(),
+            txn_id,
+            endpoint,
+            result: result.clone(),
+            created_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    {
         tracing::warn!(error = %e, "failed to record transaction idempotency record");
     }
 
@@ -162,19 +227,34 @@ pub async fn put_state_event_no_key(
     Path((room_id, event_type)): Path<(String, String)>,
     Json(content): Json<Value>,
 ) -> BicerinResult<Json<Value>> {
-    put_state_event(user, State(state), Path((room_id, event_type, String::new())), Json(content)).await
+    put_state_event(
+        user,
+        State(state),
+        Path((room_id, event_type, String::new())),
+        Json(content),
+    )
+    .await
 }
 
-pub async fn get_room_state(State(state): State<AppState>, Path(room_id): Path<String>) -> BicerinResult<Json<Value>> {
+pub async fn get_room_state(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> BicerinResult<Json<Value>> {
     let events = state.rooms.get_state(&room_id).await?;
-    Ok(Json(json!(events.into_iter().map(state_to_client_event).collect::<Vec<_>>())))
+    Ok(Json(json!(events
+        .into_iter()
+        .map(state_to_client_event)
+        .collect::<Vec<_>>())))
 }
 
 pub async fn get_state_event(
     State(state): State<AppState>,
     Path((room_id, event_type, state_key)): Path<(String, String, String)>,
 ) -> BicerinResult<Json<Value>> {
-    let record = state.rooms.get_state_event(&room_id, &event_type, &state_key).await?;
+    let record = state
+        .rooms
+        .get_state_event(&room_id, &event_type, &state_key)
+        .await?;
     Ok(Json(record.content))
 }
 
@@ -185,7 +265,10 @@ pub async fn get_state_event_no_key(
     get_state_event(State(state), Path((room_id, event_type, String::new()))).await
 }
 
-pub async fn get_members(State(state): State<AppState>, Path(room_id): Path<String>) -> BicerinResult<Json<Value>> {
+pub async fn get_members(
+    State(state): State<AppState>,
+    Path(room_id): Path<String>,
+) -> BicerinResult<Json<Value>> {
     let members = bicerin_storage::rooms::get_room_members(&state.pool, &room_id)
         .await
         .map_err(|_| BicerinError::NotFound)?;
@@ -241,8 +324,12 @@ pub async fn get_messages(
         .await?;
 
     let chunk: Vec<Value> = events.iter().map(event_to_client_event).collect();
-    let start_token = query.from.unwrap_or_else(|| bicerin_sync::token::SyncToken::new(0).to_string());
-    let end_token = end.map(|e| bicerin_sync::token::SyncToken::new(e).to_string()).unwrap_or(start_token.clone());
+    let start_token = query
+        .from
+        .unwrap_or_else(|| bicerin_sync::token::SyncToken::new(0).to_string());
+    let end_token = end
+        .map(|e| bicerin_sync::token::SyncToken::new(e).to_string())
+        .unwrap_or(start_token.clone());
 
     Ok(Json(json!({
         "chunk": chunk,
