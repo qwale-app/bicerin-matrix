@@ -1,12 +1,9 @@
 use crate::service::RoomService;
-use bicerin_storage::rooms::*;
 use bicerin_error::BicerinResult;
+use bicerin_storage::rooms::*;
 
 impl RoomService {
-    pub async fn get_state(
-        &self,
-        room_id: &str,
-    ) -> BicerinResult<Vec<RoomStateRecord>> {
+    pub async fn get_state(&self, room_id: &str) -> BicerinResult<Vec<RoomStateRecord>> {
         bicerin_storage::rooms::get_full_room_state(&self.store, room_id)
             .await
             .map_err(|_| bicerin_error::BicerinError::NotFound)

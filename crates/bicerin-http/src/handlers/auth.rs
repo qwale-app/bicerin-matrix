@@ -28,7 +28,9 @@ pub async fn well_known_client(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn get_login_flows() -> Json<Value> {
-    Json(json!({ "flows": [ { "type": "m.login.password" }, { "type": "m.login.application_service" } ] }))
+    Json(
+        json!({ "flows": [ { "type": "m.login.password" }, { "type": "m.login.application_service" } ] }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +52,11 @@ pub struct LoginRequest {
     pub initial_device_display_name: Option<String>,
 }
 
-pub async fn login(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<LoginRequest>) -> BicerinResult<Json<Value>> {
+pub async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> BicerinResult<Json<Value>> {
     if body.login_type == "m.login.application_service" {
         return login_as_appservice(state, headers, body).await;
     }
@@ -81,7 +87,10 @@ pub async fn login(State(state): State<AppState>, headers: HeaderMap, Json(body)
             error: "This account has been deactivated".to_string(),
         });
     }
-    let hash = user.password_hash.as_deref().ok_or(BicerinError::Forbidden)?;
+    let hash = user
+        .password_hash
+        .as_deref()
+        .ok_or(BicerinError::Forbidden)?;
     if !bicerin_auth::password::verify_password(&password, hash) {
         return Err(BicerinError::Forbidden);
     }
@@ -105,7 +114,11 @@ pub async fn login(State(state): State<AppState>, headers: HeaderMap, Json(body)
 /// appservice's own `as_token` (not a normal user access token). The target
 /// user (bot user by default, or `identifier.user`/`user` within the
 /// appservice's namespace) is auto-created if it doesn't exist yet.
-async fn login_as_appservice(state: AppState, headers: HeaderMap, body: LoginRequest) -> BicerinResult<Json<Value>> {
+async fn login_as_appservice(
+    state: AppState,
+    headers: HeaderMap,
+    body: LoginRequest,
+) -> BicerinResult<Json<Value>> {
     let as_token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -132,22 +145,30 @@ async fn login_as_appservice(state: AppState, headers: HeaderMap, body: LoginReq
         });
     }
 
-    if bicerin_storage::users::get_user(&state.pool, &user_id).await.is_err() {
+    if bicerin_storage::users::get_user(&state.pool, &user_id)
+        .await
+        .is_err()
+    {
         let localpart = user_id
             .strip_prefix('@')
             .and_then(|rest| rest.split(':').next())
             .unwrap_or(&user_id)
             .to_string();
-        bicerin_storage::users::create_user(&state.pool, &bicerin_storage::users::UserRecord {
-            user_id: user_id.clone(),
-            localpart,
-            password_hash: None,
-            display_name: None,
-            avatar_url: None,
-            is_guest: false,
-            is_deactivated: false,
-            created_at: chrono::Utc::now(),
-        }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::users::create_user(
+            &state.pool,
+            &bicerin_storage::users::UserRecord {
+                user_id: user_id.clone(),
+                localpart,
+                password_hash: None,
+                display_name: None,
+                avatar_url: None,
+                is_guest: false,
+                is_deactivated: false,
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
     }
 
     let (access_token, device_id) = issue_session(
@@ -174,7 +195,10 @@ pub async fn logout(user: AuthUser, State(state): State<AppState>) -> BicerinRes
     Ok(Json(json!({})))
 }
 
-pub async fn logout_all(user: AuthUser, State(state): State<AppState>) -> BicerinResult<Json<Value>> {
+pub async fn logout_all(
+    user: AuthUser,
+    State(state): State<AppState>,
+) -> BicerinResult<Json<Value>> {
     bicerin_storage::users::delete_access_tokens_for_user(&state.pool, &user.user_id)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
@@ -219,14 +243,53 @@ pub async fn register(
         return register_as_appservice(state, headers, body).await;
     }
 
+    if query.kind.as_deref() == Some("guest") {
+        if !state.guest_access_enabled {
+            return Err(BicerinError::MatrixError {
+                errcode: "M_FORBIDDEN".to_string(),
+                error: "Guest access is disabled".to_string(),
+            });
+        }
+        let localpart = generate_localpart();
+        let user_id = format!("@{}:{}", localpart, state.server_name);
+        bicerin_storage::users::create_user(
+            &state.pool,
+            &bicerin_storage::users::UserRecord {
+                user_id: user_id.clone(),
+                localpart,
+                password_hash: None,
+                display_name: None,
+                avatar_url: None,
+                is_guest: true,
+                is_deactivated: false,
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
+
+        if body.inhibit_login {
+            return Ok(Json(json!({ "user_id": user_id })));
+        }
+        let (access_token, device_id) = issue_session(
+            &state,
+            &user_id,
+            body.device_id,
+            body.initial_device_display_name,
+        )
+        .await?;
+        return Ok(Json(json!({
+            "access_token": access_token,
+            "device_id": device_id,
+            "user_id": user_id,
+        })));
+    }
+
     if !state.registration_enabled {
         return Err(BicerinError::MatrixError {
             errcode: "M_FORBIDDEN".to_string(),
             error: "Registration is disabled".to_string(),
         });
-    }
-    if query.kind.as_deref() == Some("guest") {
-        return Err(BicerinError::BadRequest("guest registration is not implemented".to_string()));
     }
 
     let completed_dummy = body
@@ -255,7 +318,10 @@ pub async fn register(
         .ok_or_else(|| BicerinError::BadRequest("missing password".to_string()))?;
 
     let user_id = format!("@{}:{}", localpart, state.server_name);
-    if bicerin_storage::users::get_user(&state.pool, &user_id).await.is_ok() {
+    if bicerin_storage::users::get_user(&state.pool, &user_id)
+        .await
+        .is_ok()
+    {
         return Err(BicerinError::MatrixError {
             errcode: "M_USER_IN_USE".to_string(),
             error: "Desired user ID is already taken.".to_string(),
@@ -265,16 +331,21 @@ pub async fn register(
     let password_hash = bicerin_auth::password::hash_password(&password)
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
-    bicerin_storage::users::create_user(&state.pool, &bicerin_storage::users::UserRecord {
-        user_id: user_id.clone(),
-        localpart,
-        password_hash: Some(password_hash),
-        display_name: None,
-        avatar_url: None,
-        is_guest: false,
-        is_deactivated: false,
-        created_at: chrono::Utc::now(),
-    }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+    bicerin_storage::users::create_user(
+        &state.pool,
+        &bicerin_storage::users::UserRecord {
+            user_id: user_id.clone(),
+            localpart,
+            password_hash: Some(password_hash),
+            display_name: None,
+            avatar_url: None,
+            is_guest: false,
+            is_deactivated: false,
+            created_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
     if body.inhibit_login {
         return Ok(Json(json!({ "user_id": user_id })));
@@ -302,7 +373,11 @@ pub async fn register(
 /// `registration_enabled` since this isn't public signup. Idempotent: an
 /// already-registered ghost still succeeds instead of `M_USER_IN_USE`, since
 /// bridges call this on every startup.
-async fn register_as_appservice(state: AppState, headers: HeaderMap, body: RegisterRequest) -> BicerinResult<Json<Value>> {
+async fn register_as_appservice(
+    state: AppState,
+    headers: HeaderMap,
+    body: RegisterRequest,
+) -> BicerinResult<Json<Value>> {
     let as_token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -329,17 +404,25 @@ async fn register_as_appservice(state: AppState, headers: HeaderMap, body: Regis
         });
     }
 
-    if bicerin_storage::users::get_user(&state.pool, &user_id).await.is_err() {
-        bicerin_storage::users::create_user(&state.pool, &bicerin_storage::users::UserRecord {
-            user_id: user_id.clone(),
-            localpart,
-            password_hash: None,
-            display_name: None,
-            avatar_url: None,
-            is_guest: false,
-            is_deactivated: false,
-            created_at: chrono::Utc::now(),
-        }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+    if bicerin_storage::users::get_user(&state.pool, &user_id)
+        .await
+        .is_err()
+    {
+        bicerin_storage::users::create_user(
+            &state.pool,
+            &bicerin_storage::users::UserRecord {
+                user_id: user_id.clone(),
+                localpart,
+                password_hash: None,
+                display_name: None,
+                avatar_url: None,
+                is_guest: false,
+                is_deactivated: false,
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
     }
 
     if body.inhibit_login {
@@ -372,7 +455,10 @@ pub async fn register_available(
 ) -> BicerinResult<Json<Value>> {
     validate_localpart(&query.username)?;
     let user_id = format!("@{}:{}", query.username, state.server_name);
-    if bicerin_storage::users::get_user(&state.pool, &user_id).await.is_ok() {
+    if bicerin_storage::users::get_user(&state.pool, &user_id)
+        .await
+        .is_ok()
+    {
         return Err(BicerinError::MatrixError {
             errcode: "M_USER_IN_USE".to_string(),
             error: "Desired user ID is already taken.".to_string(),
@@ -400,40 +486,58 @@ async fn issue_session(
 ) -> BicerinResult<(String, String)> {
     let device_id = device_id.unwrap_or_else(bicerin_auth::token::generate_device_id);
 
-    bicerin_storage::users::create_device(&state.pool, &bicerin_storage::users::DeviceRecord {
-        device_id: device_id.clone(),
-        user_id: user_id.to_string(),
-        display_name,
-        last_seen_ip: None,
-        last_seen_ts: Some(chrono::Utc::now()),
-        created_at: chrono::Utc::now(),
-    }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+    bicerin_storage::users::create_device(
+        &state.pool,
+        &bicerin_storage::users::DeviceRecord {
+            device_id: device_id.clone(),
+            user_id: user_id.to_string(),
+            display_name,
+            last_seen_ip: None,
+            last_seen_ts: Some(chrono::Utc::now()),
+            created_at: chrono::Utc::now(),
+        },
+    )
+    .await
+    .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
     let access_token = bicerin_auth::token::generate_access_token();
     let token_hash = bicerin_types::auth::hash_access_token(&access_token).to_string();
 
-    bicerin_storage::users::create_access_token(&state.pool, &bicerin_storage::users::AccessTokenRecord {
-        token_hash,
-        user_id: user_id.to_string(),
-        device_id: device_id.clone(),
-        created_at: chrono::Utc::now(),
-        expires_at: None,
-        last_used_at: None,
-    }).await.map_err(|e| BicerinError::Internal(e.to_string()))?;
+    bicerin_storage::users::create_access_token(
+        &state.pool,
+        &bicerin_storage::users::AccessTokenRecord {
+            token_hash,
+            user_id: user_id.to_string(),
+            device_id: device_id.clone(),
+            created_at: chrono::Utc::now(),
+            expires_at: None,
+            last_used_at: None,
+        },
+    )
+    .await
+    .map_err(|e| BicerinError::Internal(e.to_string()))?;
 
     Ok((access_token, device_id))
 }
 
 // --- Profile -----------------------------------------------------------
 
-pub async fn get_profile(State(state): State<AppState>, Path(user_id): Path<String>) -> BicerinResult<Json<Value>> {
+pub async fn get_profile(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> BicerinResult<Json<Value>> {
     let record = bicerin_storage::users::get_user(&state.pool, &user_id)
         .await
         .map_err(|_| BicerinError::NotFound)?;
-    Ok(Json(json!({ "displayname": record.display_name, "avatar_url": record.avatar_url })))
+    Ok(Json(
+        json!({ "displayname": record.display_name, "avatar_url": record.avatar_url }),
+    ))
 }
 
-pub async fn get_display_name(State(state): State<AppState>, Path(user_id): Path<String>) -> BicerinResult<Json<Value>> {
+pub async fn get_display_name(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> BicerinResult<Json<Value>> {
     let record = bicerin_storage::users::get_user(&state.pool, &user_id)
         .await
         .map_err(|_| BicerinError::NotFound)?;
@@ -460,7 +564,10 @@ pub async fn set_display_name(
     Ok(Json(json!({})))
 }
 
-pub async fn get_avatar_url(State(state): State<AppState>, Path(user_id): Path<String>) -> BicerinResult<Json<Value>> {
+pub async fn get_avatar_url(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+) -> BicerinResult<Json<Value>> {
     let record = bicerin_storage::users::get_user(&state.pool, &user_id)
         .await
         .map_err(|_| BicerinError::NotFound)?;
@@ -489,7 +596,10 @@ pub async fn set_avatar_url(
 
 // --- Devices -------------------------------------------------------------
 
-pub async fn list_devices(user: AuthUser, State(state): State<AppState>) -> BicerinResult<Json<Value>> {
+pub async fn list_devices(
+    user: AuthUser,
+    State(state): State<AppState>,
+) -> BicerinResult<Json<Value>> {
     let devices = bicerin_storage::users::list_devices(&state.pool, &user.user_id)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
@@ -520,9 +630,14 @@ pub async fn update_device(
     Json(body): Json<UpdateDeviceBody>,
 ) -> BicerinResult<Json<Value>> {
     if let Some(name) = body.display_name {
-        bicerin_storage::users::update_device_display_name(&state.pool, &user.user_id, &device_id, &name)
-            .await
-            .map_err(|e| BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::users::update_device_display_name(
+            &state.pool,
+            &user.user_id,
+            &device_id,
+            &name,
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
     }
     Ok(Json(json!({})))
 }
@@ -532,6 +647,34 @@ pub async fn delete_device(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
 ) -> BicerinResult<Json<Value>> {
+    let had_identity_keys = match bicerin_storage::crypto::get_device_keys(
+        &state.pool,
+        &user.user_id,
+        &device_id,
+    )
+    .await
+    {
+        Ok(_) => true,
+        Err(bicerin_storage::db::StorageError::NotFound) => false,
+        Err(error) => return Err(BicerinError::Internal(error.to_string())),
+    };
+    bicerin_storage::crypto::delete_device_crypto_material(&state.pool, &user.user_id, &device_id)
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
+    if had_identity_keys {
+        let stream_id = bicerin_storage::events::get_next_stream_id(&state.pool)
+            .await
+            .map_err(|e| BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::cross_signing::record_device_change(
+            &state.pool,
+            &user.user_id,
+            stream_id,
+            "changed",
+        )
+        .await
+        .map_err(|e| BicerinError::Internal(e.to_string()))?;
+        state.sync_bus.notify_all(stream_id);
+    }
     bicerin_storage::users::delete_access_tokens_for_device(&state.pool, &user.user_id, &device_id)
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;

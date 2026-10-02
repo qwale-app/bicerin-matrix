@@ -1,6 +1,6 @@
+pub mod middleware;
 pub mod password;
 pub mod token;
-pub mod middleware;
 
 use bicerin_error::BicerinResult;
 use bicerin_storage::Store;
@@ -20,8 +20,12 @@ impl AuthService {
             .max_capacity(100_000)
             .time_to_live(Duration::from_secs(5 * 60))
             .build();
-            
-        Self { store, server_name, token_cache }
+
+        Self {
+            store,
+            server_name,
+            token_cache,
+        }
     }
 
     /// Authenticates a request's bearer/query-param token.
@@ -33,20 +37,29 @@ impl AuthService {
     /// user is auto-created ("ghost vivification") if it doesn't exist yet.
     ///
     /// [identity assertion]: https://spec.matrix.org/v1.19/application-service-api/#identity-assertion
-    pub async fn authenticate(&self, token: &str, requested_user_id: Option<&str>) -> BicerinResult<(String, String)> {
+    pub async fn authenticate(
+        &self,
+        token: &str,
+        requested_user_id: Option<&str>,
+    ) -> BicerinResult<(String, String)> {
         if let Some(ident) = self.token_cache.get(token).await {
             return Ok(ident);
         }
 
-        if let Ok(appservice) = bicerin_storage::appservice::get_appservice_by_as_token(&self.store, token).await {
-            return self.authenticate_as_appservice(&appservice, requested_user_id).await;
+        if let Ok(appservice) =
+            bicerin_storage::appservice::get_appservice_by_as_token(&self.store, token).await
+        {
+            return self
+                .authenticate_as_appservice(&appservice, requested_user_id)
+                .await;
         }
 
         let hashed_token = bicerin_types::auth::hash_access_token(token);
 
-        let record = bicerin_storage::users::get_access_token(&self.store, &hashed_token.to_string())
-            .await
-            .map_err(|_| bicerin_error::BicerinError::Unauthorized)?;
+        let record =
+            bicerin_storage::users::get_access_token(&self.store, &hashed_token.to_string())
+                .await
+                .map_err(|_| bicerin_error::BicerinError::Unauthorized)?;
 
         if let Some(expires_at) = record.expires_at {
             if expires_at < chrono::Utc::now() {
@@ -55,7 +68,9 @@ impl AuthService {
         }
 
         let ident = (record.user_id, record.device_id);
-        self.token_cache.insert(token.to_string(), ident.clone()).await;
+        self.token_cache
+            .insert(token.to_string(), ident.clone())
+            .await;
         Ok(ident)
     }
 
@@ -82,7 +97,10 @@ impl AuthService {
     }
 
     async fn ensure_appservice_user(&self, user_id: &str) -> BicerinResult<()> {
-        if bicerin_storage::users::get_user(&self.store, user_id).await.is_ok() {
+        if bicerin_storage::users::get_user(&self.store, user_id)
+            .await
+            .is_ok()
+        {
             return Ok(());
         }
 
@@ -92,16 +110,21 @@ impl AuthService {
             .unwrap_or(user_id)
             .to_string();
 
-        bicerin_storage::users::create_user(&self.store, &bicerin_storage::users::UserRecord {
-            user_id: user_id.to_string(),
-            localpart,
-            password_hash: None,
-            display_name: None,
-            avatar_url: None,
-            is_guest: false,
-            is_deactivated: false,
-            created_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::users::create_user(
+            &self.store,
+            &bicerin_storage::users::UserRecord {
+                user_id: user_id.to_string(),
+                localpart,
+                password_hash: None,
+                display_name: None,
+                avatar_url: None,
+                is_guest: false,
+                is_deactivated: false,
+                created_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
 
         Ok(())
     }

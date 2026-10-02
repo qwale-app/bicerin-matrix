@@ -1,5 +1,14 @@
+pub mod admin;
+pub mod appservice;
 pub mod auth;
+pub mod client_data;
+pub mod filters;
+pub mod ephemeral;
+pub mod key_backup;
 pub mod keys;
 pub mod media;
+pub mod presence;
+pub mod push;
 pub mod rooms;
 pub mod sync;
+pub mod websocket;

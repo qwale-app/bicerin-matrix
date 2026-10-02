@@ -12,6 +12,8 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
 
 bicerin-types = { path = "../bicerin-types" }
 bicerin-error = { path = "../bicerin-error" }

@@ -20,6 +20,9 @@ impl EventService {
         content: Value,
         _txn_id: Option<&str>,
     ) -> BicerinResult<(String, i64)> {
+        crate::validation::validate_room_id(room_id)?;
+        crate::validation::validate_event_type(event_type)?;
+        crate::validation::validate_event_content(&content)?;
         let member = bicerin_storage::rooms::get_room_member(&self.store, room_id, sender)
             .await
             .map_err(|_| BicerinError::Forbidden)?;
@@ -71,6 +74,7 @@ impl EventService {
 
         crate::relations::index_relations(&self.store, &event).await;
         crate::appservice_dispatch::dispatch(&self.store, &self.server_name, &event).await;
+        crate::push_dispatch::dispatch(&self.store, &event).await;
 
         tracing::debug!(event_id = %event_id, room_id = %room_id, event_type = %event_type, stream_id = stream_id, "event persisted");
 
@@ -85,6 +89,20 @@ impl EventService {
         state_key: &str,
         content: Value,
     ) -> BicerinResult<(String, i64)> {
+        crate::validation::validate_room_id(room_id)?;
+        crate::validation::validate_event_type(event_type)?;
+        crate::validation::validate_event_content(&content)?;
+        if event_type == "m.room.member" {
+            return Err(BicerinError::BadRequest(
+                "membership changes must use the room membership endpoints".into(),
+            ));
+        }
+        crate::validation::validate_state_key_sender(sender, state_key)?;
+        if event_type == "m.room.encryption" && state_key != "" {
+            return Err(BicerinError::BadRequest(
+                "m.room.encryption must use an empty state key".into(),
+            ));
+        }
         let member = bicerin_storage::rooms::get_room_member(&self.store, room_id, sender)
             .await
             .map_err(|_| BicerinError::Forbidden)?;
@@ -154,6 +172,12 @@ impl EventService {
         )
         .await
         .map_err(|e| BicerinError::Internal(e.to_string()))?;
+
+        if event_type == "m.room.encryption" {
+            bicerin_storage::rooms::mark_room_encrypted(&self.store, room_id)
+                .await
+                .map_err(|e| BicerinError::Internal(e.to_string()))?;
+        }
 
         crate::appservice_dispatch::dispatch(&self.store, &self.server_name, &event).await;
 

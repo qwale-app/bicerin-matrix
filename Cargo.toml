@@ -10,7 +10,9 @@ members = [
     "crates/bicerin-storage",
     "crates/bicerin-types",
     "crates/bicerin-config",
-    "crates/bicerin-error"
+    "crates/bicerin-error",
+    "crates/bicerin-compat",
+    "crates/bicerin-loadgen"
 ]
 resolver = "2"
 
@@ -33,11 +35,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 config = { version = "0.14" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 sha2 = { version = "0.10" }
+hmac = { version = "0.12" }
 hex = { version = "0.4" }
 rand = { version = "0.8" }
 base64 = { version = "0.22" }
+ed25519-dalek = { version = "2" }
 moka = { version = "0.12", features = ["future"] }
 ruma = { version = "0.10", features = ["client-api", "appservice-api", "push-gateway-api", "server-util", "events"] }
 metrics = { version = "0.23" }
@@ -49,6 +53,7 @@ http = { version = "1" }
 mime = { version = "0.3" }
 url = { version = "2", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["io"] }
 serde_yaml = { version = "0.9" }
 regex = { version = "1" }

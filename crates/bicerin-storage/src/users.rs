@@ -32,7 +32,6 @@ pub struct DeviceRecord {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-
 use crate::db::StorageResult;
 use crate::store::Store;
 
@@ -50,7 +49,11 @@ pub async fn get_user(store: &Store, user_id: &str) -> StorageResult<UserRecord>
     }
 }
 
-pub async fn get_user_by_localpart(store: &Store, localpart: &str, server_name: &str) -> StorageResult<UserRecord> {
+pub async fn get_user_by_localpart(
+    store: &Store,
+    localpart: &str,
+    server_name: &str,
+) -> StorageResult<UserRecord> {
     let user_id = format!("@{}:{}", localpart, server_name);
     get_user(store, &user_id).await
 }
@@ -83,7 +86,11 @@ pub async fn create_device(store: &Store, device: &DeviceRecord) -> StorageResul
     }
 }
 
-pub async fn get_device(store: &Store, user_id: &str, device_id: &str) -> StorageResult<DeviceRecord> {
+pub async fn get_device(
+    store: &Store,
+    user_id: &str,
+    device_id: &str,
+) -> StorageResult<DeviceRecord> {
     match store {
         Store::Postgres(pool) => pg::get_device(pool, user_id, device_id).await,
         Store::Mongo(backend) => mongo::get_device(&backend.database, user_id, device_id).await,
@@ -104,44 +111,132 @@ pub async fn delete_device(store: &Store, user_id: &str, device_id: &str) -> Sto
     }
 }
 
-pub async fn update_device_display_name(store: &Store, user_id: &str, device_id: &str, display_name: &str) -> StorageResult<()> {
+pub async fn update_device_display_name(
+    store: &Store,
+    user_id: &str,
+    device_id: &str,
+    display_name: &str,
+) -> StorageResult<()> {
     match store {
-        Store::Postgres(pool) => pg::update_device_display_name(pool, user_id, device_id, display_name).await,
-        Store::Mongo(backend) => mongo::update_device_display_name(&backend.database, user_id, device_id, display_name).await,
+        Store::Postgres(pool) => {
+            pg::update_device_display_name(pool, user_id, device_id, display_name).await
+        }
+        Store::Mongo(backend) => {
+            mongo::update_device_display_name(&backend.database, user_id, device_id, display_name)
+                .await
+        }
     }
 }
 
-pub async fn update_display_name(store: &Store, user_id: &str, display_name: Option<&str>) -> StorageResult<()> {
+pub async fn update_display_name(
+    store: &Store,
+    user_id: &str,
+    display_name: Option<&str>,
+) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::update_display_name(pool, user_id, display_name).await,
-        Store::Mongo(backend) => mongo::update_display_name(&backend.database, user_id, display_name).await,
+        Store::Mongo(backend) => {
+            mongo::update_display_name(&backend.database, user_id, display_name).await
+        }
     }
 }
 
-pub async fn update_avatar_url(store: &Store, user_id: &str, avatar_url: Option<&str>) -> StorageResult<()> {
+pub async fn update_avatar_url(
+    store: &Store,
+    user_id: &str,
+    avatar_url: Option<&str>,
+) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::update_avatar_url(pool, user_id, avatar_url).await,
-        Store::Mongo(backend) => mongo::update_avatar_url(&backend.database, user_id, avatar_url).await,
+        Store::Mongo(backend) => {
+            mongo::update_avatar_url(&backend.database, user_id, avatar_url).await
+        }
     }
 }
 
-pub async fn delete_access_tokens_for_device(store: &Store, user_id: &str, device_id: &str) -> StorageResult<()> {
+pub async fn delete_access_tokens_for_device(
+    store: &Store,
+    user_id: &str,
+    device_id: &str,
+) -> StorageResult<()> {
     match store {
-        Store::Postgres(pool) => pg::delete_access_tokens_for_device(pool, user_id, device_id).await,
-        Store::Mongo(backend) => mongo::delete_access_tokens_for_device(&backend.database, user_id, device_id).await,
+        Store::Postgres(pool) => {
+            pg::delete_access_tokens_for_device(pool, user_id, device_id).await
+        }
+        Store::Mongo(backend) => {
+            mongo::delete_access_tokens_for_device(&backend.database, user_id, device_id).await
+        }
     }
 }
 
 pub async fn delete_access_tokens_for_user(store: &Store, user_id: &str) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::delete_access_tokens_for_user(pool, user_id).await,
-        Store::Mongo(backend) => mongo::delete_access_tokens_for_user(&backend.database, user_id).await,
+        Store::Mongo(backend) => {
+            mongo::delete_access_tokens_for_user(&backend.database, user_id).await
+        }
+    }
+}
+
+pub async fn count_users(store: &Store) -> StorageResult<u64> {
+    match store {
+        Store::Postgres(pool) => pg::count_users(pool).await,
+        Store::Mongo(backend) => mongo::count_users(&backend.database).await,
+    }
+}
+
+pub async fn list_users(store: &Store, limit: i64) -> StorageResult<Vec<UserRecord>> {
+    match store {
+        Store::Postgres(pool) => pg::list_users(pool, limit).await,
+        Store::Mongo(backend) => mongo::list_users(&backend.database, limit).await,
+    }
+}
+
+pub async fn set_user_deactivated(
+    store: &Store,
+    user_id: &str,
+    deactivated: bool,
+) -> StorageResult<()> {
+    match store {
+        Store::Postgres(pool) => pg::set_user_deactivated(pool, user_id, deactivated).await,
+        Store::Mongo(backend) => {
+            mongo::set_user_deactivated(&backend.database, user_id, deactivated).await
+        }
     }
 }
 
 mod pg {
     use super::{AccessTokenRecord, DeviceRecord, UserRecord};
     use crate::db::{StorageError, StorageResult};
+
+    pub async fn count_users(pool: &sqlx::PgPool) -> StorageResult<u64> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(pool)
+            .await?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub async fn list_users(pool: &sqlx::PgPool, limit: i64) -> StorageResult<Vec<UserRecord>> {
+        Ok(sqlx::query_as::<_, UserRecord>(
+            "SELECT user_id, localpart, password_hash, display_name, avatar_url, is_guest, is_deactivated, created_at FROM users ORDER BY created_at DESC LIMIT $1"
+        )
+        .bind(limit)
+        .fetch_all(pool)
+        .await?)
+    }
+
+    pub async fn set_user_deactivated(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        deactivated: bool,
+    ) -> StorageResult<()> {
+        sqlx::query("UPDATE users SET is_deactivated=$2 WHERE user_id=$1")
+            .bind(user_id)
+            .bind(deactivated)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
 
     pub async fn create_user(pool: &sqlx::PgPool, user: &UserRecord) -> StorageResult<()> {
         sqlx::query(
@@ -171,7 +266,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn create_access_token(pool: &sqlx::PgPool, token: &AccessTokenRecord) -> StorageResult<()> {
+    pub async fn create_access_token(
+        pool: &sqlx::PgPool,
+        token: &AccessTokenRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO access_tokens (token_hash, user_id, device_id, created_at, expires_at, last_used_at) VALUES ($1, $2, $3, $4, $5, $6)"
         )
@@ -186,7 +284,10 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_access_token(pool: &sqlx::PgPool, token_hash: &str) -> StorageResult<AccessTokenRecord> {
+    pub async fn get_access_token(
+        pool: &sqlx::PgPool,
+        token_hash: &str,
+    ) -> StorageResult<AccessTokenRecord> {
         sqlx::query_as::<_, AccessTokenRecord>(
             "SELECT token_hash, user_id, device_id, created_at, expires_at, last_used_at FROM access_tokens WHERE token_hash = $1"
         )
@@ -219,7 +320,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_device(pool: &sqlx::PgPool, user_id: &str, device_id: &str) -> StorageResult<DeviceRecord> {
+    pub async fn get_device(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        device_id: &str,
+    ) -> StorageResult<DeviceRecord> {
         sqlx::query_as::<_, DeviceRecord>(
             "SELECT device_id, user_id, display_name, last_seen_ip, last_seen_ts, created_at FROM devices WHERE user_id = $1 AND device_id = $2"
         )
@@ -230,7 +335,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn list_devices(pool: &sqlx::PgPool, user_id: &str) -> StorageResult<Vec<DeviceRecord>> {
+    pub async fn list_devices(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+    ) -> StorageResult<Vec<DeviceRecord>> {
         let devices = sqlx::query_as::<_, DeviceRecord>(
             "SELECT device_id, user_id, display_name, last_seen_ip, last_seen_ts, created_at FROM devices WHERE user_id = $1 ORDER BY created_at"
         )
@@ -240,7 +348,11 @@ mod pg {
         Ok(devices)
     }
 
-    pub async fn delete_device(pool: &sqlx::PgPool, user_id: &str, device_id: &str) -> StorageResult<()> {
+    pub async fn delete_device(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        device_id: &str,
+    ) -> StorageResult<()> {
         sqlx::query("DELETE FROM devices WHERE user_id = $1 AND device_id = $2")
             .bind(user_id)
             .bind(device_id)
@@ -249,7 +361,12 @@ mod pg {
         Ok(())
     }
 
-    pub async fn update_device_display_name(pool: &sqlx::PgPool, user_id: &str, device_id: &str, display_name: &str) -> StorageResult<()> {
+    pub async fn update_device_display_name(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        device_id: &str,
+        display_name: &str,
+    ) -> StorageResult<()> {
         sqlx::query("UPDATE devices SET display_name = $3 WHERE user_id = $1 AND device_id = $2")
             .bind(user_id)
             .bind(device_id)
@@ -259,7 +376,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn update_display_name(pool: &sqlx::PgPool, user_id: &str, display_name: Option<&str>) -> StorageResult<()> {
+    pub async fn update_display_name(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        display_name: Option<&str>,
+    ) -> StorageResult<()> {
         sqlx::query("UPDATE users SET display_name = $2 WHERE user_id = $1")
             .bind(user_id)
             .bind(display_name)
@@ -268,7 +389,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn update_avatar_url(pool: &sqlx::PgPool, user_id: &str, avatar_url: Option<&str>) -> StorageResult<()> {
+    pub async fn update_avatar_url(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        avatar_url: Option<&str>,
+    ) -> StorageResult<()> {
         sqlx::query("UPDATE users SET avatar_url = $2 WHERE user_id = $1")
             .bind(user_id)
             .bind(avatar_url)
@@ -277,7 +402,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn delete_access_tokens_for_device(pool: &sqlx::PgPool, user_id: &str, device_id: &str) -> StorageResult<()> {
+    pub async fn delete_access_tokens_for_device(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        device_id: &str,
+    ) -> StorageResult<()> {
         sqlx::query("DELETE FROM access_tokens WHERE user_id = $1 AND device_id = $2")
             .bind(user_id)
             .bind(device_id)
@@ -286,7 +415,10 @@ mod pg {
         Ok(())
     }
 
-    pub async fn delete_access_tokens_for_user(pool: &sqlx::PgPool, user_id: &str) -> StorageResult<()> {
+    pub async fn delete_access_tokens_for_user(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+    ) -> StorageResult<()> {
         sqlx::query("DELETE FROM access_tokens WHERE user_id = $1")
             .bind(user_id)
             .execute(pool)
@@ -326,12 +458,18 @@ mod mongo {
             .ok_or(StorageError::NotFound)
     }
 
-    pub async fn create_access_token(db: &Database, token: &AccessTokenRecord) -> StorageResult<()> {
+    pub async fn create_access_token(
+        db: &Database,
+        token: &AccessTokenRecord,
+    ) -> StorageResult<()> {
         access_tokens(db).insert_one(token).await?;
         Ok(())
     }
 
-    pub async fn get_access_token(db: &Database, token_hash: &str) -> StorageResult<AccessTokenRecord> {
+    pub async fn get_access_token(
+        db: &Database,
+        token_hash: &str,
+    ) -> StorageResult<AccessTokenRecord> {
         access_tokens(db)
             .find_one(doc! { "token_hash": token_hash })
             .await?
@@ -339,7 +477,9 @@ mod mongo {
     }
 
     pub async fn delete_access_token(db: &Database, token_hash: &str) -> StorageResult<()> {
-        access_tokens(db).delete_one(doc! { "token_hash": token_hash }).await?;
+        access_tokens(db)
+            .delete_one(doc! { "token_hash": token_hash })
+            .await?;
         Ok(())
     }
 
@@ -351,7 +491,11 @@ mod mongo {
         }
     }
 
-    pub async fn get_device(db: &Database, user_id: &str, device_id: &str) -> StorageResult<DeviceRecord> {
+    pub async fn get_device(
+        db: &Database,
+        user_id: &str,
+        device_id: &str,
+    ) -> StorageResult<DeviceRecord> {
         devices(db)
             .find_one(doc! { "user_id": user_id, "device_id": device_id })
             .await?
@@ -368,11 +512,18 @@ mod mongo {
     }
 
     pub async fn delete_device(db: &Database, user_id: &str, device_id: &str) -> StorageResult<()> {
-        devices(db).delete_one(doc! { "user_id": user_id, "device_id": device_id }).await?;
+        devices(db)
+            .delete_one(doc! { "user_id": user_id, "device_id": device_id })
+            .await?;
         Ok(())
     }
 
-    pub async fn update_device_display_name(db: &Database, user_id: &str, device_id: &str, display_name: &str) -> StorageResult<()> {
+    pub async fn update_device_display_name(
+        db: &Database,
+        user_id: &str,
+        device_id: &str,
+        display_name: &str,
+    ) -> StorageResult<()> {
         devices(db)
             .update_one(
                 doc! { "user_id": user_id, "device_id": device_id },
@@ -382,21 +533,39 @@ mod mongo {
         Ok(())
     }
 
-    pub async fn update_display_name(db: &Database, user_id: &str, display_name: Option<&str>) -> StorageResult<()> {
+    pub async fn update_display_name(
+        db: &Database,
+        user_id: &str,
+        display_name: Option<&str>,
+    ) -> StorageResult<()> {
         users(db)
-            .update_one(doc! { "user_id": user_id }, doc! { "$set": { "display_name": display_name } })
+            .update_one(
+                doc! { "user_id": user_id },
+                doc! { "$set": { "display_name": display_name } },
+            )
             .await?;
         Ok(())
     }
 
-    pub async fn update_avatar_url(db: &Database, user_id: &str, avatar_url: Option<&str>) -> StorageResult<()> {
+    pub async fn update_avatar_url(
+        db: &Database,
+        user_id: &str,
+        avatar_url: Option<&str>,
+    ) -> StorageResult<()> {
         users(db)
-            .update_one(doc! { "user_id": user_id }, doc! { "$set": { "avatar_url": avatar_url } })
+            .update_one(
+                doc! { "user_id": user_id },
+                doc! { "$set": { "avatar_url": avatar_url } },
+            )
             .await?;
         Ok(())
     }
 
-    pub async fn delete_access_tokens_for_device(db: &Database, user_id: &str, device_id: &str) -> StorageResult<()> {
+    pub async fn delete_access_tokens_for_device(
+        db: &Database,
+        user_id: &str,
+        device_id: &str,
+    ) -> StorageResult<()> {
         access_tokens(db)
             .delete_many(doc! { "user_id": user_id, "device_id": device_id })
             .await?;
@@ -404,7 +573,37 @@ mod mongo {
     }
 
     pub async fn delete_access_tokens_for_user(db: &Database, user_id: &str) -> StorageResult<()> {
-        access_tokens(db).delete_many(doc! { "user_id": user_id }).await?;
+        access_tokens(db)
+            .delete_many(doc! { "user_id": user_id })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn count_users(db: &Database) -> StorageResult<u64> {
+        Ok(users(db).count_documents(doc! {}).await?)
+    }
+
+    pub async fn list_users(db: &Database, limit: i64) -> StorageResult<Vec<UserRecord>> {
+        use futures::stream::TryStreamExt;
+        let cursor = users(db)
+            .find(doc! {})
+            .sort(doc! { "created_at": -1 })
+            .limit(limit)
+            .await?;
+        Ok(cursor.try_collect().await?)
+    }
+
+    pub async fn set_user_deactivated(
+        db: &Database,
+        user_id: &str,
+        deactivated: bool,
+    ) -> StorageResult<()> {
+        users(db)
+            .update_one(
+                doc! { "user_id": user_id },
+                doc! { "$set": { "is_deactivated": deactivated } },
+            )
+            .await?;
         Ok(())
     }
 }

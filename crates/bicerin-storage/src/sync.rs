@@ -1,24 +1,54 @@
 use crate::db::StorageResult;
 use crate::store::Store;
 
-pub async fn upsert_user_room_cursor(store: &Store, user_id: &str, room_id: &str, stream_id: i64) -> StorageResult<()> {
+pub async fn upsert_user_room_cursor(
+    store: &Store,
+    user_id: &str,
+    room_id: &str,
+    stream_id: i64,
+) -> StorageResult<()> {
     match store {
-        Store::Postgres(pool) => pg::upsert_user_room_cursor(pool, user_id, room_id, stream_id).await,
-        Store::Mongo(backend) => mongo::upsert_user_room_cursor(&backend.database, user_id, room_id, stream_id).await,
+        Store::Postgres(pool) => {
+            pg::upsert_user_room_cursor(pool, user_id, room_id, stream_id).await
+        }
+        Store::Mongo(backend) => {
+            mongo::upsert_user_room_cursor(&backend.database, user_id, room_id, stream_id).await
+        }
     }
 }
 
-pub async fn get_user_room_cursor(store: &Store, user_id: &str, room_id: &str) -> StorageResult<i64> {
+pub async fn get_user_room_cursor(
+    store: &Store,
+    user_id: &str,
+    room_id: &str,
+) -> StorageResult<i64> {
     match store {
         Store::Postgres(pool) => pg::get_user_room_cursor(pool, user_id, room_id).await,
-        Store::Mongo(backend) => mongo::get_user_room_cursor(&backend.database, user_id, room_id).await,
+        Store::Mongo(backend) => {
+            mongo::get_user_room_cursor(&backend.database, user_id, room_id).await
+        }
     }
 }
 
-pub async fn get_rooms_with_new_events(store: &Store, user_id: &str, joined_rooms: &[String], since_stream_id: i64) -> StorageResult<Vec<String>> {
+pub async fn get_rooms_with_new_events(
+    store: &Store,
+    user_id: &str,
+    joined_rooms: &[String],
+    since_stream_id: i64,
+) -> StorageResult<Vec<String>> {
     match store {
-        Store::Postgres(pool) => pg::get_rooms_with_new_events(pool, user_id, joined_rooms, since_stream_id).await,
-        Store::Mongo(backend) => mongo::get_rooms_with_new_events(&backend.database, user_id, joined_rooms, since_stream_id).await,
+        Store::Postgres(pool) => {
+            pg::get_rooms_with_new_events(pool, user_id, joined_rooms, since_stream_id).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_rooms_with_new_events(
+                &backend.database,
+                user_id,
+                joined_rooms,
+                since_stream_id,
+            )
+            .await
+        }
     }
 }
 
@@ -29,7 +59,12 @@ pub async fn get_current_stream_position(store: &Store) -> StorageResult<i64> {
 mod pg {
     use crate::db::StorageResult;
 
-    pub async fn upsert_user_room_cursor(pool: &sqlx::PgPool, user_id: &str, room_id: &str, stream_id: i64) -> StorageResult<()> {
+    pub async fn upsert_user_room_cursor(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        room_id: &str,
+        stream_id: i64,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO user_room_cursors (user_id, room_id, last_stream_id) VALUES ($1, $2, $3) ON CONFLICT (user_id, room_id) DO UPDATE SET last_stream_id = $3"
         )
@@ -41,9 +76,13 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_user_room_cursor(pool: &sqlx::PgPool, user_id: &str, room_id: &str) -> StorageResult<i64> {
+    pub async fn get_user_room_cursor(
+        pool: &sqlx::PgPool,
+        user_id: &str,
+        room_id: &str,
+    ) -> StorageResult<i64> {
         let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT last_stream_id FROM user_room_cursors WHERE user_id = $1 AND room_id = $2"
+            "SELECT last_stream_id FROM user_room_cursors WHERE user_id = $1 AND room_id = $2",
         )
         .bind(user_id)
         .bind(room_id)
@@ -52,11 +91,18 @@ mod pg {
         Ok(row.map(|(v,)| v).unwrap_or(0))
     }
 
-    pub async fn get_rooms_with_new_events(pool: &sqlx::PgPool, _user_id: &str, joined_rooms: &[String], since_stream_id: i64) -> StorageResult<Vec<String>> {
+    pub async fn get_rooms_with_new_events(
+        pool: &sqlx::PgPool,
+        _user_id: &str,
+        joined_rooms: &[String],
+        since_stream_id: i64,
+    ) -> StorageResult<Vec<String>> {
         if joined_rooms.is_empty() {
             return Ok(vec![]);
         }
-        let placeholders: String = joined_rooms.iter().enumerate()
+        let placeholders: String = joined_rooms
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("${}", i + 2))
             .collect::<Vec<_>>()
             .join(", ");
@@ -83,7 +129,12 @@ mod mongo {
         db.collection("user_room_cursors")
     }
 
-    pub async fn upsert_user_room_cursor(db: &Database, user_id: &str, room_id: &str, stream_id: i64) -> StorageResult<()> {
+    pub async fn upsert_user_room_cursor(
+        db: &Database,
+        user_id: &str,
+        room_id: &str,
+        stream_id: i64,
+    ) -> StorageResult<()> {
         cursors(db)
             .find_one_and_update(
                 doc! { "user_id": user_id, "room_id": room_id },
@@ -95,12 +146,25 @@ mod mongo {
         Ok(())
     }
 
-    pub async fn get_user_room_cursor(db: &Database, user_id: &str, room_id: &str) -> StorageResult<i64> {
-        let doc = cursors(db).find_one(doc! { "user_id": user_id, "room_id": room_id }).await?;
-        Ok(doc.and_then(|d| d.get_i64("last_stream_id").ok()).unwrap_or(0))
+    pub async fn get_user_room_cursor(
+        db: &Database,
+        user_id: &str,
+        room_id: &str,
+    ) -> StorageResult<i64> {
+        let doc = cursors(db)
+            .find_one(doc! { "user_id": user_id, "room_id": room_id })
+            .await?;
+        Ok(doc
+            .and_then(|d| d.get_i64("last_stream_id").ok())
+            .unwrap_or(0))
     }
 
-    pub async fn get_rooms_with_new_events(db: &Database, _user_id: &str, joined_rooms: &[String], since_stream_id: i64) -> StorageResult<Vec<String>> {
+    pub async fn get_rooms_with_new_events(
+        db: &Database,
+        _user_id: &str,
+        joined_rooms: &[String],
+        since_stream_id: i64,
+    ) -> StorageResult<Vec<String>> {
         if joined_rooms.is_empty() {
             return Ok(vec![]);
         }
@@ -113,7 +177,13 @@ mod mongo {
             .await?;
         Ok(values
             .into_iter()
-            .filter_map(|v| if let Bson::String(s) = v { Some(s) } else { None })
+            .filter_map(|v| {
+                if let Bson::String(s) = v {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
             .take(100)
             .collect())
     }

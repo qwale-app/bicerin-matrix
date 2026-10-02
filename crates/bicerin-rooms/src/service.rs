@@ -3,5 +3,7 @@ pub struct RoomService {
 }
 
 impl RoomService {
-    pub fn new(store: bicerin_storage::Store) -> Self { Self { store } }
+    pub fn new(store: bicerin_storage::Store) -> Self {
+        Self { store }
+    }
 }

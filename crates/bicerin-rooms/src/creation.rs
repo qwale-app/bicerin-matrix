@@ -1,6 +1,6 @@
 use crate::service::RoomService;
-use bicerin_storage::{rooms::*, events::*};
 use bicerin_error::BicerinResult;
+use bicerin_storage::{events::*, rooms::*};
 use serde_json::{json, Value};
 
 #[derive(Debug, serde::Deserialize)]
@@ -15,6 +15,7 @@ pub struct CreateRoomParams {
     pub preset: Option<String>,
     pub room_alias_name: Option<String>,
     pub power_level_content_override: Option<Value>,
+    pub visibility: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -31,7 +32,11 @@ impl RoomService {
         params: CreateRoomParams,
         server_name: &str,
     ) -> BicerinResult<(String, Vec<String>)> {
-        let room_id = format!("!{}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
+        let room_id = format!(
+            "!{}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            server_name
+        );
         let now_ts = chrono::Utc::now().timestamp_millis();
 
         // Bridges commonly pass `m.room.encryption` via `initial_state` to
@@ -41,6 +46,15 @@ impl RoomService {
             .iter()
             .any(|s| s.event_type == "m.room.encryption");
 
+        let canonical_alias = match &params.room_alias_name {
+            Some(local_alias) => Some(format!("#{}:{}", local_alias, server_name)),
+            None => None,
+        };
+        let visibility = match params.visibility.as_deref() {
+            Some("public") => "public",
+            _ => "private",
+        };
+
         let room_record = RoomRecord {
             room_id: room_id.clone(),
             creator: params.creator.clone(),
@@ -49,26 +63,58 @@ impl RoomService {
             is_direct: params.is_direct,
             name: params.name.clone(),
             topic: params.topic.clone(),
-            canonical_alias: None,
+            canonical_alias: canonical_alias.clone(),
+            visibility: visibility.to_string(),
             creation_ts: now_ts,
             created_at: chrono::Utc::now(),
         };
+
+        if let Some(alias) = &canonical_alias {
+            bicerin_storage::rooms::create_alias(&self.store, alias, &room_id, &params.creator)
+                .await
+                .map_err(|e| match e {
+                    bicerin_storage::db::StorageError::Conflict(msg) => {
+                        bicerin_error::BicerinError::MatrixError {
+                            errcode: "M_ROOM_IN_USE".to_string(),
+                            error: msg,
+                        }
+                    }
+                    other => bicerin_error::BicerinError::Internal(other.to_string()),
+                })?;
+        }
 
         bicerin_storage::rooms::create_room(&self.store, &room_record)
             .await
             .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
 
         let mut event_ids = vec![];
-        let creation_event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
-        let power_levels_event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
-        let join_rules_event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
-        let member_event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
+        let creation_event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            server_name
+        );
+        let power_levels_event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            server_name
+        );
+        let join_rules_event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            server_name
+        );
+        let member_event_id = format!(
+            "${}:{}",
+            uuid::Uuid::new_v4().to_string().replace('-', ""),
+            server_name
+        );
 
-        let (join_rule, _history_vis, _guest_access, pl_state_default, pl_events_default) = match params.preset.as_deref() {
-            Some("public_chat") => ("public", "shared", "forbidden", 50, 0),
-            Some("trusted_private_chat") => ("invite", "shared", "forbidden", 0, 0),
-            _ => ("invite", "shared", "forbidden", 50, 0),
-        };
+        let (join_rule, _history_vis, _guest_access, pl_state_default, pl_events_default) =
+            match params.preset.as_deref() {
+                Some("public_chat") => ("public", "shared", "forbidden", 50, 0),
+                Some("trusted_private_chat") => ("invite", "shared", "forbidden", 0, 0),
+                _ => ("invite", "shared", "forbidden", 50, 0),
+            };
 
         let power_levels_content = json!({
             "ban": 50,
@@ -82,7 +128,10 @@ impl RoomService {
             "users": {&params.creator: 100},
             "users_default": 0
         });
-        let power_levels_content = merge_power_level_override(power_levels_content, params.power_level_content_override.as_ref());
+        let power_levels_content = merge_power_level_override(
+            power_levels_content,
+            params.power_level_content_override.as_ref(),
+        );
 
         // Creation event
         let creation_stream_id = bicerin_storage::events::get_next_stream_id(&self.store)
@@ -108,11 +157,21 @@ impl RoomService {
         bicerin_storage::events::insert_event(&self.store, &creation_event)
             .await
             .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-        bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-            room_id: room_id.clone(), event_type: "m.room.create".to_string(), state_key: "".to_string(),
-            event_id: creation_event_id.clone(), content: creation_event.content.clone(),
-            sender: params.creator.clone(), stream_id: creation_stream_id, updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_state(
+            &self.store,
+            &bicerin_storage::rooms::RoomStateRecord {
+                room_id: room_id.clone(),
+                event_type: "m.room.create".to_string(),
+                state_key: "".to_string(),
+                event_id: creation_event_id.clone(),
+                content: creation_event.content.clone(),
+                sender: params.creator.clone(),
+                stream_id: creation_stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
         event_ids.push(creation_event_id.clone());
 
         // Member event
@@ -139,16 +198,37 @@ impl RoomService {
         bicerin_storage::events::insert_event(&self.store, &join_event)
             .await
             .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-        bicerin_storage::rooms::upsert_room_member(&self.store, &RoomMemberRecord {
-            room_id: room_id.clone(), user_id: params.creator.clone(), membership: "join".to_string(),
-            display_name: None, avatar_url: None, sender: params.creator.clone(),
-            event_id: member_event_id.clone(), stream_id: member_stream_id, updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-        bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-            room_id: room_id.clone(), event_type: "m.room.member".to_string(), state_key: params.creator.clone(),
-            event_id: member_event_id.clone(), content: join_event.content.clone(),
-            sender: params.creator.clone(), stream_id: member_stream_id, updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_member(
+            &self.store,
+            &RoomMemberRecord {
+                room_id: room_id.clone(),
+                user_id: params.creator.clone(),
+                membership: "join".to_string(),
+                display_name: None,
+                avatar_url: None,
+                sender: params.creator.clone(),
+                event_id: member_event_id.clone(),
+                stream_id: member_stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_state(
+            &self.store,
+            &bicerin_storage::rooms::RoomStateRecord {
+                room_id: room_id.clone(),
+                event_type: "m.room.member".to_string(),
+                state_key: params.creator.clone(),
+                event_id: member_event_id.clone(),
+                content: join_event.content.clone(),
+                sender: params.creator.clone(),
+                stream_id: member_stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
         event_ids.push(member_event_id);
 
         // Power levels event
@@ -175,11 +255,21 @@ impl RoomService {
         bicerin_storage::events::insert_event(&self.store, &pl_event)
             .await
             .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-        bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-            room_id: room_id.clone(), event_type: "m.room.power_levels".to_string(), state_key: "".to_string(),
-            event_id: power_levels_event_id.clone(), content: power_levels_content,
-            sender: params.creator.clone(), stream_id: power_levels_stream_id, updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_state(
+            &self.store,
+            &bicerin_storage::rooms::RoomStateRecord {
+                room_id: room_id.clone(),
+                event_type: "m.room.power_levels".to_string(),
+                state_key: "".to_string(),
+                event_id: power_levels_event_id.clone(),
+                content: power_levels_content,
+                sender: params.creator.clone(),
+                stream_id: power_levels_stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
         event_ids.push(power_levels_event_id);
 
         // Join rules event
@@ -206,12 +296,70 @@ impl RoomService {
         bicerin_storage::events::insert_event(&self.store, &jr_event)
             .await
             .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-        bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-            room_id: room_id.clone(), event_type: "m.room.join_rules".to_string(), state_key: "".to_string(),
-            event_id: join_rules_event_id.clone(), content: jr_event.content.clone(),
-            sender: params.creator.clone(), stream_id: join_rules_stream_id, updated_at: chrono::Utc::now(),
-        }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+        bicerin_storage::rooms::upsert_room_state(
+            &self.store,
+            &bicerin_storage::rooms::RoomStateRecord {
+                room_id: room_id.clone(),
+                event_type: "m.room.join_rules".to_string(),
+                state_key: "".to_string(),
+                event_id: join_rules_event_id.clone(),
+                content: jr_event.content.clone(),
+                sender: params.creator.clone(),
+                stream_id: join_rules_stream_id,
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .await
+        .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
         event_ids.push(join_rules_event_id);
+
+        if let Some(alias) = &canonical_alias {
+            let alias_event_id = format!(
+                "${}:{}",
+                uuid::Uuid::new_v4().to_string().replace('-', ""),
+                server_name
+            );
+            let alias_stream_id = bicerin_storage::events::get_next_stream_id(&self.store)
+                .await
+                .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+            let alias_content = json!({"alias": alias});
+            let alias_event = EventRecord {
+                event_id: alias_event_id.clone(),
+                room_id: room_id.clone(),
+                sender: params.creator.clone(),
+                stream_id: alias_stream_id,
+                origin_server_ts: now_ts,
+                event_type: "m.room.canonical_alias".to_string(),
+                state_key: Some("".to_string()),
+                room_version: params.room_version.clone(),
+                content: alias_content.clone(),
+                unsigned: None,
+                redacts: None,
+                depth: 5,
+                auth_events: vec![creation_event_id.clone()],
+                prev_events: vec![creation_event_id.clone()],
+                created_at: chrono::Utc::now(),
+            };
+            bicerin_storage::events::insert_event(&self.store, &alias_event)
+                .await
+                .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+            bicerin_storage::rooms::upsert_room_state(
+                &self.store,
+                &bicerin_storage::rooms::RoomStateRecord {
+                    room_id: room_id.clone(),
+                    event_type: "m.room.canonical_alias".to_string(),
+                    state_key: "".to_string(),
+                    event_id: alias_event_id.clone(),
+                    content: alias_content,
+                    sender: params.creator.clone(),
+                    stream_id: alias_stream_id,
+                    updated_at: chrono::Utc::now(),
+                },
+            )
+            .await
+            .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+            event_ids.push(alias_event_id);
+        }
 
         // Client-supplied `initial_state` (e.g. `m.room.encryption`,
         // `m.bridge`/`uk.half-shot.bridge` bridge-info state used by mautrix
@@ -219,7 +367,7 @@ impl RoomService {
         // of the defaults above, so a client can also override
         // join_rules/history_visibility/etc. `m.room.create` can't be
         // overridden this way.
-        let mut depth = 5i64;
+        let mut depth = 6i64;
         for state_event in params.initial_state {
             if state_event.event_type == "m.room.create" {
                 continue;
@@ -228,7 +376,11 @@ impl RoomService {
             let stream_id = bicerin_storage::events::get_next_stream_id(&self.store)
                 .await
                 .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-            let event_id = format!("${}:{}", uuid::Uuid::new_v4().to_string().replace('-', ""), server_name);
+            let event_id = format!(
+                "${}:{}",
+                uuid::Uuid::new_v4().to_string().replace('-', ""),
+                server_name
+            );
             let event = EventRecord {
                 event_id: event_id.clone(),
                 room_id: room_id.clone(),
@@ -250,11 +402,21 @@ impl RoomService {
             bicerin_storage::events::insert_event(&self.store, &event)
                 .await
                 .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
-            bicerin_storage::rooms::upsert_room_state(&self.store, &bicerin_storage::rooms::RoomStateRecord {
-                room_id: room_id.clone(), event_type: state_event.event_type, state_key,
-                event_id: event_id.clone(), content: state_event.content,
-                sender: params.creator.clone(), stream_id, updated_at: chrono::Utc::now(),
-            }).await.map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
+            bicerin_storage::rooms::upsert_room_state(
+                &self.store,
+                &bicerin_storage::rooms::RoomStateRecord {
+                    room_id: room_id.clone(),
+                    event_type: state_event.event_type,
+                    state_key,
+                    event_id: event_id.clone(),
+                    content: state_event.content,
+                    sender: params.creator.clone(),
+                    stream_id,
+                    updated_at: chrono::Utc::now(),
+                },
+            )
+            .await
+            .map_err(|e| bicerin_error::BicerinError::Internal(e.to_string()))?;
             event_ids.push(event_id);
         }
 

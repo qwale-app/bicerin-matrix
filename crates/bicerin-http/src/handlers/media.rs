@@ -34,7 +34,9 @@ pub async fn upload_media(
         .upload(&user.user_id, &mime_type, query.filename, body.to_vec())
         .await?;
 
-    Ok(Json(json!({ "content_uri": format!("mxc://{}/{}", state.server_name, media_id) })))
+    Ok(Json(
+        json!({ "content_uri": format!("mxc://{}/{}", state.server_name, media_id) }),
+    ))
 }
 
 pub async fn download_media(
@@ -50,7 +52,9 @@ pub async fn download_media(
     if let Some(name) = &record.upload_name {
         let sanitized = name.replace(['"', '\r', '\n'], "");
         if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{sanitized}\"")) {
-            response.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+            response
+                .headers_mut()
+                .insert(header::CONTENT_DISPOSITION, value);
         }
     }
     Ok(response)

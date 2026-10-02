@@ -23,7 +23,11 @@ pub async fn create_media(store: &Store, media: &MediaRecord) -> StorageResult<(
     }
 }
 
-pub async fn get_media(store: &Store, server_name: &str, media_id: &str) -> StorageResult<MediaRecord> {
+pub async fn get_media(
+    store: &Store,
+    server_name: &str,
+    media_id: &str,
+) -> StorageResult<MediaRecord> {
     match store {
         Store::Postgres(pool) => pg::get_media(pool, server_name, media_id).await,
         Store::Mongo(backend) => mongo::get_media(&backend.database, server_name, media_id).await,
@@ -53,7 +57,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_media(pool: &sqlx::PgPool, server_name: &str, media_id: &str) -> StorageResult<MediaRecord> {
+    pub async fn get_media(
+        pool: &sqlx::PgPool,
+        server_name: &str,
+        media_id: &str,
+    ) -> StorageResult<MediaRecord> {
         sqlx::query_as::<_, MediaRecord>(
             "SELECT media_id, server_name, uploader, mime_type, size_bytes, sha256, storage_key, upload_name, created_at FROM media WHERE server_name = $1 AND media_id = $2"
         )
@@ -80,7 +88,11 @@ mod mongo {
         Ok(())
     }
 
-    pub async fn get_media(db: &Database, server_name: &str, media_id: &str) -> StorageResult<MediaRecord> {
+    pub async fn get_media(
+        db: &Database,
+        server_name: &str,
+        media_id: &str,
+    ) -> StorageResult<MediaRecord> {
         media(db)
             .find_one(doc! { "server_name": server_name, "media_id": media_id })
             .await?

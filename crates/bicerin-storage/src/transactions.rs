@@ -24,8 +24,12 @@ pub async fn get_transaction(
     endpoint: &str,
 ) -> StorageResult<Option<TransactionRecord>> {
     match store {
-        Store::Postgres(pool) => pg::get_transaction(pool, user_id, device_id, txn_id, endpoint).await,
-        Store::Mongo(backend) => mongo::get_transaction(&backend.database, user_id, device_id, txn_id, endpoint).await,
+        Store::Postgres(pool) => {
+            pg::get_transaction(pool, user_id, device_id, txn_id, endpoint).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_transaction(&backend.database, user_id, device_id, txn_id, endpoint).await
+        }
     }
 }
 
@@ -49,7 +53,7 @@ mod pg {
     ) -> StorageResult<Option<TransactionRecord>> {
         let record = sqlx::query_as::<_, TransactionRecord>(
             "SELECT user_id, device_id, txn_id, endpoint, result, created_at FROM transactions \
-             WHERE user_id = $1 AND device_id = $2 AND txn_id = $3 AND endpoint = $4"
+             WHERE user_id = $1 AND device_id = $2 AND txn_id = $3 AND endpoint = $4",
         )
         .bind(user_id)
         .bind(device_id)
@@ -60,7 +64,10 @@ mod pg {
         Ok(record)
     }
 
-    pub async fn record_transaction(pool: &sqlx::PgPool, record: &TransactionRecord) -> StorageResult<()> {
+    pub async fn record_transaction(
+        pool: &sqlx::PgPool,
+        record: &TransactionRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO transactions (user_id, device_id, txn_id, endpoint, result, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id, device_id, txn_id, endpoint) DO NOTHING"
@@ -105,7 +112,10 @@ mod mongo {
         Ok(record)
     }
 
-    pub async fn record_transaction(db: &Database, record: &TransactionRecord) -> StorageResult<()> {
+    pub async fn record_transaction(
+        db: &Database,
+        record: &TransactionRecord,
+    ) -> StorageResult<()> {
         match transactions(db).insert_one(record).await {
             Ok(_) => Ok(()),
             Err(e) if is_duplicate_key_error(&e) => Ok(()),

@@ -17,7 +17,11 @@ pub struct MongoBackend {
 }
 
 impl Store {
-    pub async fn connect_postgres(url: &str, max_connections: u32, min_connections: u32) -> StorageResult<Self> {
+    pub async fn connect_postgres(
+        url: &str,
+        max_connections: u32,
+        min_connections: u32,
+    ) -> StorageResult<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(max_connections)
             .min_connections(min_connections)
@@ -38,7 +42,9 @@ impl Store {
             .database(database)
             .run_command(doc! { "ping": 1 })
             .await?;
-        Ok(Store::Mongo(MongoBackend { database: client.database(database) }))
+        Ok(Store::Mongo(MongoBackend {
+            database: client.database(database),
+        }))
     }
 
     /// Prepares the datastore for use: runs SQL migrations for Postgres, or

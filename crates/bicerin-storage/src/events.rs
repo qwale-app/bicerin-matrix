@@ -44,24 +44,111 @@ pub async fn get_event(store: &Store, event_id: &str) -> StorageResult<EventReco
     }
 }
 
-pub async fn get_events_in_room(store: &Store, room_id: &str, from_stream_id: i64, limit: i64, direction: &str) -> StorageResult<Vec<EventRecord>> {
+pub async fn count_unread_messages(
+    store: &Store,
+    room_id: &str,
+    user_id: &str,
+    after_stream_id: i64,
+    through_stream_id: i64,
+) -> StorageResult<u64> {
     match store {
-        Store::Postgres(pool) => pg::get_events_in_room(pool, room_id, from_stream_id, limit, direction).await,
-        Store::Mongo(backend) => mongo::get_events_in_room(&backend.database, room_id, from_stream_id, limit, direction).await,
+        Store::Postgres(pool) => {
+            pg::count_unread_messages(pool, room_id, user_id, after_stream_id, through_stream_id)
+                .await
+        }
+        Store::Mongo(backend) => {
+            mongo::count_unread_messages(
+                &backend.database,
+                room_id,
+                user_id,
+                after_stream_id,
+                through_stream_id,
+            )
+            .await
+        }
     }
 }
 
-pub async fn get_latest_events_in_room(store: &Store, room_id: &str, limit: i64) -> StorageResult<Vec<EventRecord>> {
+/// Counts unread messages that explicitly use Matrix's `m.mentions` structure
+/// to mention the recipient or the whole room.
+pub async fn count_highlighted_messages(
+    store: &Store,
+    room_id: &str,
+    user_id: &str,
+    recipient_id: &str,
+    after_stream_id: i64,
+    through_stream_id: i64,
+) -> StorageResult<u64> {
+    match store {
+        Store::Postgres(pool) => {
+            pg::count_highlighted_messages(
+                pool,
+                room_id,
+                user_id,
+                recipient_id,
+                after_stream_id,
+                through_stream_id,
+            )
+            .await
+        }
+        Store::Mongo(backend) => {
+            mongo::count_highlighted_messages(
+                &backend.database,
+                room_id,
+                user_id,
+                recipient_id,
+                after_stream_id,
+                through_stream_id,
+            )
+            .await
+        }
+    }
+}
+
+pub async fn get_events_in_room(
+    store: &Store,
+    room_id: &str,
+    from_stream_id: i64,
+    limit: i64,
+    direction: &str,
+) -> StorageResult<Vec<EventRecord>> {
+    match store {
+        Store::Postgres(pool) => {
+            pg::get_events_in_room(pool, room_id, from_stream_id, limit, direction).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_events_in_room(&backend.database, room_id, from_stream_id, limit, direction)
+                .await
+        }
+    }
+}
+
+pub async fn get_latest_events_in_room(
+    store: &Store,
+    room_id: &str,
+    limit: i64,
+) -> StorageResult<Vec<EventRecord>> {
     match store {
         Store::Postgres(pool) => pg::get_latest_events_in_room(pool, room_id, limit).await,
-        Store::Mongo(backend) => mongo::get_latest_events_in_room(&backend.database, room_id, limit).await,
+        Store::Mongo(backend) => {
+            mongo::get_latest_events_in_room(&backend.database, room_id, limit).await
+        }
     }
 }
 
-pub async fn get_events_since(store: &Store, user_id: &str, room_ids: &[String], since_stream_id: i64) -> StorageResult<Vec<EventRecord>> {
+pub async fn get_events_since(
+    store: &Store,
+    user_id: &str,
+    room_ids: &[String],
+    since_stream_id: i64,
+) -> StorageResult<Vec<EventRecord>> {
     match store {
-        Store::Postgres(pool) => pg::get_events_since(pool, user_id, room_ids, since_stream_id).await,
-        Store::Mongo(backend) => mongo::get_events_since(&backend.database, user_id, room_ids, since_stream_id).await,
+        Store::Postgres(pool) => {
+            pg::get_events_since(pool, user_id, room_ids, since_stream_id).await
+        }
+        Store::Mongo(backend) => {
+            mongo::get_events_since(&backend.database, user_id, room_ids, since_stream_id).await
+        }
     }
 }
 
@@ -88,10 +175,16 @@ pub async fn insert_event_relation(store: &Store, rel: &EventRelationRecord) -> 
     }
 }
 
-pub async fn get_event_relations(store: &Store, parent_event_id: &str, rel_type: Option<&str>) -> StorageResult<Vec<EventRelationRecord>> {
+pub async fn get_event_relations(
+    store: &Store,
+    parent_event_id: &str,
+    rel_type: Option<&str>,
+) -> StorageResult<Vec<EventRelationRecord>> {
     match store {
         Store::Postgres(pool) => pg::get_event_relations(pool, parent_event_id, rel_type).await,
-        Store::Mongo(backend) => mongo::get_event_relations(&backend.database, parent_event_id, rel_type).await,
+        Store::Mongo(backend) => {
+            mongo::get_event_relations(&backend.database, parent_event_id, rel_type).await
+        }
     }
 }
 
@@ -176,7 +269,51 @@ mod pg {
         Ok(row_to_record(row))
     }
 
-    pub async fn get_events_in_room(pool: &sqlx::PgPool, room_id: &str, from_stream_id: i64, limit: i64, direction: &str) -> StorageResult<Vec<EventRecord>> {
+    pub async fn count_unread_messages(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        user_id: &str,
+        after_stream_id: i64,
+        through_stream_id: i64,
+    ) -> StorageResult<u64> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE room_id=$1 AND sender<>$2 AND stream_id>$3 AND stream_id<=$4 AND event_type IN ('m.room.message','m.room.encrypted','m.sticker')")
+            .bind(room_id)
+            .bind(user_id)
+            .bind(after_stream_id)
+            .bind(through_stream_id)
+            .fetch_one(pool)
+            .await?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub async fn count_highlighted_messages(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        user_id: &str,
+        recipient_id: &str,
+        after_stream_id: i64,
+        through_stream_id: i64,
+    ) -> StorageResult<u64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM events WHERE room_id=$1 AND sender<>$2 AND stream_id>$3 AND stream_id<=$4 AND event_type IN ('m.room.message','m.sticker') AND ((content->'m.mentions'->'user_ids') @> to_jsonb(ARRAY[$5]::text[]) OR content->'m.mentions'->>'room' = 'true')"
+        )
+        .bind(room_id)
+        .bind(user_id)
+        .bind(after_stream_id)
+        .bind(through_stream_id)
+        .bind(recipient_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub async fn get_events_in_room(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        from_stream_id: i64,
+        limit: i64,
+        direction: &str,
+    ) -> StorageResult<Vec<EventRecord>> {
         let rows = if direction == "b" {
             sqlx::query_as::<_, EventRow>(
                 "SELECT event_id, room_id, sender, stream_id, origin_server_ts, event_type, state_key, room_version, content, unsigned, redacts, depth, auth_events_json, prev_events_json, created_at FROM events WHERE room_id = $1 AND stream_id < $2 ORDER BY stream_id DESC LIMIT $3"
@@ -199,7 +336,11 @@ mod pg {
         Ok(rows.into_iter().map(row_to_record).collect())
     }
 
-    pub async fn get_latest_events_in_room(pool: &sqlx::PgPool, room_id: &str, limit: i64) -> StorageResult<Vec<EventRecord>> {
+    pub async fn get_latest_events_in_room(
+        pool: &sqlx::PgPool,
+        room_id: &str,
+        limit: i64,
+    ) -> StorageResult<Vec<EventRecord>> {
         let rows = sqlx::query_as::<_, EventRow>(
             "SELECT event_id, room_id, sender, stream_id, origin_server_ts, event_type, state_key, room_version, content, unsigned, redacts, depth, auth_events_json, prev_events_json, created_at FROM events WHERE room_id = $1 ORDER BY stream_id DESC LIMIT $2"
         )
@@ -210,11 +351,18 @@ mod pg {
         Ok(rows.into_iter().map(row_to_record).collect())
     }
 
-    pub async fn get_events_since(pool: &sqlx::PgPool, _user_id: &str, room_ids: &[String], since_stream_id: i64) -> StorageResult<Vec<EventRecord>> {
+    pub async fn get_events_since(
+        pool: &sqlx::PgPool,
+        _user_id: &str,
+        room_ids: &[String],
+        since_stream_id: i64,
+    ) -> StorageResult<Vec<EventRecord>> {
         if room_ids.is_empty() {
             return Ok(vec![]);
         }
-        let placeholders: String = room_ids.iter().enumerate()
+        let placeholders: String = room_ids
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("${}", i + 2))
             .collect::<Vec<_>>()
             .join(", ");
@@ -238,13 +386,21 @@ mod pg {
     }
 
     pub async fn get_current_stream_position(pool: &sqlx::PgPool) -> StorageResult<i64> {
-        let row: (Option<i64>,) = sqlx::query_as("SELECT MAX(stream_id) FROM events")
-            .fetch_one(pool)
-            .await?;
-        Ok(row.0.unwrap_or(0))
+        // The stream also contains account-data, key-change, and to-device
+        // updates, none of which are room events. Read the allocator rather
+        // than MAX(events.stream_id) so /sync tokens cover every stream.
+        let row: (i64,) = sqlx::query_as(
+            "SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM event_stream_seq",
+        )
+        .fetch_one(pool)
+        .await?;
+        Ok(row.0)
     }
 
-    pub async fn insert_event_relation(pool: &sqlx::PgPool, rel: &EventRelationRecord) -> StorageResult<()> {
+    pub async fn insert_event_relation(
+        pool: &sqlx::PgPool,
+        rel: &EventRelationRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO event_relations (room_id, parent_event_id, child_event_id, rel_type) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING"
         )
@@ -257,7 +413,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_event_relations(pool: &sqlx::PgPool, parent_event_id: &str, rel_type: Option<&str>) -> StorageResult<Vec<EventRelationRecord>> {
+    pub async fn get_event_relations(
+        pool: &sqlx::PgPool,
+        parent_event_id: &str,
+        rel_type: Option<&str>,
+    ) -> StorageResult<Vec<EventRelationRecord>> {
         let relations = if let Some(rt) = rel_type {
             sqlx::query_as::<_, EventRelationRecord>(
                 "SELECT room_id, parent_event_id, child_event_id, rel_type FROM event_relations WHERE parent_event_id = $1 AND rel_type = $2"
@@ -311,17 +471,72 @@ mod mongo {
             .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_events_in_room(db: &Database, room_id: &str, from_stream_id: i64, limit: i64, direction: &str) -> StorageResult<Vec<EventRecord>> {
+    pub async fn count_unread_messages(
+        db: &Database,
+        room_id: &str,
+        user_id: &str,
+        after_stream_id: i64,
+        through_stream_id: i64,
+    ) -> StorageResult<u64> {
+        Ok(events(db)
+            .count_documents(doc! {
+                "room_id": room_id,
+                "sender": {"$ne": user_id},
+                "stream_id": {"$gt": after_stream_id, "$lte": through_stream_id},
+                "event_type": {"$in": ["m.room.message", "m.room.encrypted", "m.sticker"]},
+            })
+            .await?)
+    }
+
+    pub async fn count_highlighted_messages(
+        db: &Database,
+        room_id: &str,
+        user_id: &str,
+        recipient_id: &str,
+        after_stream_id: i64,
+        through_stream_id: i64,
+    ) -> StorageResult<u64> {
+        Ok(events(db)
+            .count_documents(doc! {
+                "room_id": room_id,
+                "sender": {"$ne": user_id},
+                "stream_id": {"$gt": after_stream_id, "$lte": through_stream_id},
+                "event_type": {"$in": ["m.room.message", "m.sticker"]},
+                "$or": [
+                    { "content.m.mentions.user_ids": recipient_id },
+                    { "content.m.mentions.room": true },
+                ],
+            })
+            .await?)
+    }
+
+    pub async fn get_events_in_room(
+        db: &Database,
+        room_id: &str,
+        from_stream_id: i64,
+        limit: i64,
+        direction: &str,
+    ) -> StorageResult<Vec<EventRecord>> {
         let (filter, sort) = if direction == "b" {
-            (doc! { "room_id": room_id, "stream_id": { "$lt": from_stream_id } }, doc! { "stream_id": -1 })
+            (
+                doc! { "room_id": room_id, "stream_id": { "$lt": from_stream_id } },
+                doc! { "stream_id": -1 },
+            )
         } else {
-            (doc! { "room_id": room_id, "stream_id": { "$gt": from_stream_id } }, doc! { "stream_id": 1 })
+            (
+                doc! { "room_id": room_id, "stream_id": { "$gt": from_stream_id } },
+                doc! { "stream_id": 1 },
+            )
         };
         let cursor = events(db).find(filter).sort(sort).limit(limit).await?;
         Ok(cursor.try_collect().await?)
     }
 
-    pub async fn get_latest_events_in_room(db: &Database, room_id: &str, limit: i64) -> StorageResult<Vec<EventRecord>> {
+    pub async fn get_latest_events_in_room(
+        db: &Database,
+        room_id: &str,
+        limit: i64,
+    ) -> StorageResult<Vec<EventRecord>> {
         let cursor = events(db)
             .find(doc! { "room_id": room_id })
             .sort(doc! { "stream_id": -1 })
@@ -330,7 +545,12 @@ mod mongo {
         Ok(cursor.try_collect().await?)
     }
 
-    pub async fn get_events_since(db: &Database, _user_id: &str, room_ids: &[String], since_stream_id: i64) -> StorageResult<Vec<EventRecord>> {
+    pub async fn get_events_since(
+        db: &Database,
+        _user_id: &str,
+        room_ids: &[String],
+        since_stream_id: i64,
+    ) -> StorageResult<Vec<EventRecord>> {
         if room_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -344,20 +564,30 @@ mod mongo {
 
     pub async fn get_next_stream_id(db: &Database) -> StorageResult<i64> {
         let doc = counters(db)
-            .find_one_and_update(doc! { "_id": "event_stream" }, doc! { "$inc": { "seq": 1i64 } })
+            .find_one_and_update(
+                doc! { "_id": "event_stream" },
+                doc! { "$inc": { "seq": 1i64 } },
+            )
             .upsert(true)
             .return_document(ReturnDocument::After)
             .await?
-            .ok_or_else(|| StorageError::Internal("counter upsert returned no document".to_string()))?;
+            .ok_or_else(|| {
+                StorageError::Internal("counter upsert returned no document".to_string())
+            })?;
         Ok(doc.get_i64("seq").unwrap_or(0))
     }
 
     pub async fn get_current_stream_position(db: &Database) -> StorageResult<i64> {
-        let doc = counters(db).find_one(doc! { "_id": "event_stream" }).await?;
+        let doc = counters(db)
+            .find_one(doc! { "_id": "event_stream" })
+            .await?;
         Ok(doc.and_then(|d| d.get_i64("seq").ok()).unwrap_or(0))
     }
 
-    pub async fn insert_event_relation(db: &Database, rel: &EventRelationRecord) -> StorageResult<()> {
+    pub async fn insert_event_relation(
+        db: &Database,
+        rel: &EventRelationRecord,
+    ) -> StorageResult<()> {
         match event_relations(db).insert_one(rel).await {
             Ok(_) => Ok(()),
             Err(e) if is_duplicate_key_error(&e) => Ok(()),
@@ -365,7 +595,11 @@ mod mongo {
         }
     }
 
-    pub async fn get_event_relations(db: &Database, parent_event_id: &str, rel_type: Option<&str>) -> StorageResult<Vec<EventRelationRecord>> {
+    pub async fn get_event_relations(
+        db: &Database,
+        parent_event_id: &str,
+        rel_type: Option<&str>,
+    ) -> StorageResult<Vec<EventRelationRecord>> {
         let mut filter = doc! { "parent_event_id": parent_event_id };
         if let Some(rt) = rel_type {
             filter.insert("rel_type", rt);
@@ -374,4 +608,3 @@ mod mongo {
         Ok(cursor.try_collect().await?)
     }
 }
-

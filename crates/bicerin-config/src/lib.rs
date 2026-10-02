@@ -10,14 +10,50 @@ pub struct BicerinConfig {
     pub matrix: MatrixConfig,
     #[serde(default)]
     pub appservices: AppserviceConfig,
+    #[serde(default)]
+    pub rate_limiting: RateLimitConfig,
+    #[serde(default)]
+    pub admin: AdminConfig,
+}
+
+/// Admin API (`/_bicerin/admin/*`) configuration. The whole admin API is
+/// disabled unless `api_token` is set.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct AdminConfig {
+    pub api_token: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    /// Requests per minute per client IP for most endpoints.
+    pub general_per_minute: u32,
+    /// Requests per minute per client IP for `/login` and `/register`.
+    pub sensitive_per_minute: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            general_per_minute: 300,
+            sensitive_per_minute: 10,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ServerConfig {
-    pub bind: String,           // e.g. "0.0.0.0:8448"
-    pub server_name: String,    // e.g. "example.com"
-    pub public_url: String,     // base URL
+    pub bind: String,        // e.g. "0.0.0.0:8448"
+    pub server_name: String, // e.g. "example.com"
+    pub public_url: String,  // base URL
     pub request_id_header: Option<String>,
+    #[serde(default = "default_signing_key_path")]
+    pub signing_key_path: String,
+}
+
+fn default_signing_key_path() -> String {
+    "./signing.key".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -50,7 +86,7 @@ pub struct RedisConfig {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct MediaConfig {
-    pub storage_backend: String,   // "local" or "s3"
+    pub storage_backend: String, // "local" or "s3"
     pub local_path: Option<String>,
     pub s3_bucket: Option<String>,
     pub s3_endpoint: Option<String>,
@@ -63,6 +99,8 @@ pub struct MatrixConfig {
     pub default_room_version: String,
     pub registration_enabled: bool,
     pub registration_shared_secret: Option<String>,
+    #[serde(default)]
+    pub guest_access_enabled: bool,
 }
 
 /// Application-service (bridge) registration. Paths to `registration.yaml`
@@ -82,6 +120,7 @@ impl Default for BicerinConfig {
                 server_name: "localhost".to_string(),
                 public_url: "http://localhost:8448".to_string(),
                 request_id_header: None,
+                signing_key_path: default_signing_key_path(),
             },
             database: DatabaseConfig {
                 backend: "postgres".to_string(),
@@ -106,8 +145,11 @@ impl Default for BicerinConfig {
                 default_room_version: "10".to_string(),
                 registration_enabled: false,
                 registration_shared_secret: None,
+                guest_access_enabled: false,
             },
             appservices: AppserviceConfig::default(),
+            rate_limiting: RateLimitConfig::default(),
+            admin: AdminConfig::default(),
         }
     }
 }
@@ -115,10 +157,13 @@ impl Default for BicerinConfig {
 impl BicerinConfig {
     pub fn load(config_path: Option<&str>) -> anyhow::Result<Self> {
         let mut builder = Config::builder();
-        
+
         let default_config = serde_json::to_string(&BicerinConfig::default())?;
-        builder = builder.add_source(config::File::from_str(&default_config, config::FileFormat::Json));
-        
+        builder = builder.add_source(config::File::from_str(
+            &default_config,
+            config::FileFormat::Json,
+        ));
+
         if let Some(path) = config_path {
             if Path::new(path).exists() {
                 builder = builder.add_source(File::with_name(path));
@@ -126,15 +171,43 @@ impl BicerinConfig {
                 tracing::warn!("Config file {} not found, using defaults", path);
             }
         }
-        
-        builder = builder.add_source(
-            Environment::with_prefix("BICERIN")
-                .separator("__")
-        );
-        
+
+        builder = builder.add_source(Environment::with_prefix("BICERIN").separator("__"));
+
         let config = builder.build()?;
         let bicerin_config: BicerinConfig = config.try_deserialize()?;
-        
+
         Ok(bicerin_config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BicerinConfig, DatabaseConfig};
+
+    #[test]
+    fn defaults_select_local_postgres_and_matrix_server_settings() {
+        let config = BicerinConfig::default();
+
+        assert_eq!(config.database.backend, "postgres");
+        assert_eq!(config.database.mongo_database, "bicerin");
+        assert!(!config.database.is_mongo());
+        assert_eq!(config.matrix.default_room_version, "10");
+        assert!(!config.matrix.registration_enabled);
+    }
+
+    #[test]
+    fn mongo_backend_recognizes_supported_names_case_insensitively() {
+        for backend in ["mongo", "MONGO", "mongodb", "MongoDB"] {
+            let config = DatabaseConfig {
+                backend: backend.to_string(),
+                url: String::new(),
+                max_connections: 1,
+                min_connections: 0,
+                mongo_uri: Some("mongodb://localhost".to_string()),
+                mongo_database: "bicerin_test".to_string(),
+            };
+            assert!(config.is_mongo(), "backend {backend} should select MongoDB");
+        }
     }
 }

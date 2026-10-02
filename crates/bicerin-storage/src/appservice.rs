@@ -50,7 +50,8 @@ pub fn namespace_matches(namespaces: &serde_json::Value, kind: &str, value: &str
 /// True if the appservice is a bridge is interested in `user_id`: either it's
 /// the appservice's own bot user, or it falls within the `users` namespace.
 pub fn owns_user(record: &AppserviceRecord, server_name: &str, user_id: &str) -> bool {
-    user_id == bot_user_id(record, server_name) || namespace_matches(&record.namespaces, "users", user_id)
+    user_id == bot_user_id(record, server_name)
+        || namespace_matches(&record.namespaces, "users", user_id)
 }
 
 use crate::db::StorageResult;
@@ -70,10 +71,15 @@ pub async fn get_appservice(store: &Store, id: &str) -> StorageResult<Appservice
     }
 }
 
-pub async fn get_appservice_by_as_token(store: &Store, as_token: &str) -> StorageResult<AppserviceRecord> {
+pub async fn get_appservice_by_as_token(
+    store: &Store,
+    as_token: &str,
+) -> StorageResult<AppserviceRecord> {
     match store {
         Store::Postgres(pool) => pg::get_appservice_by_as_token(pool, as_token).await,
-        Store::Mongo(backend) => mongo::get_appservice_by_as_token(&backend.database, as_token).await,
+        Store::Mongo(backend) => {
+            mongo::get_appservice_by_as_token(&backend.database, as_token).await
+        }
     }
 }
 
@@ -84,31 +90,51 @@ pub async fn list_appservices(store: &Store) -> StorageResult<Vec<AppserviceReco
     }
 }
 
-pub async fn create_appservice_transaction(store: &Store, txn: &AppserviceTransactionRecord) -> StorageResult<()> {
+pub async fn create_appservice_transaction(
+    store: &Store,
+    txn: &AppserviceTransactionRecord,
+) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::create_appservice_transaction(pool, txn).await,
         Store::Mongo(backend) => mongo::create_appservice_transaction(&backend.database, txn).await,
     }
 }
 
-pub async fn get_pending_transactions(store: &Store, appservice_id: &str, limit: i64) -> StorageResult<Vec<AppserviceTransactionRecord>> {
+pub async fn get_pending_transactions(
+    store: &Store,
+    appservice_id: &str,
+    limit: i64,
+) -> StorageResult<Vec<AppserviceTransactionRecord>> {
     match store {
         Store::Postgres(pool) => pg::get_pending_transactions(pool, appservice_id, limit).await,
-        Store::Mongo(backend) => mongo::get_pending_transactions(&backend.database, appservice_id, limit).await,
+        Store::Mongo(backend) => {
+            mongo::get_pending_transactions(&backend.database, appservice_id, limit).await
+        }
     }
 }
 
 pub async fn mark_transaction_delivered(store: &Store, transaction_id: &str) -> StorageResult<()> {
     match store {
         Store::Postgres(pool) => pg::mark_transaction_delivered(pool, transaction_id).await,
-        Store::Mongo(backend) => mongo::mark_transaction_delivered(&backend.database, transaction_id).await,
+        Store::Mongo(backend) => {
+            mongo::mark_transaction_delivered(&backend.database, transaction_id).await
+        }
     }
 }
 
-pub async fn increment_transaction_attempts(store: &Store, transaction_id: &str, next_retry_at: chrono::DateTime<chrono::Utc>) -> StorageResult<()> {
+pub async fn increment_transaction_attempts(
+    store: &Store,
+    transaction_id: &str,
+    next_retry_at: chrono::DateTime<chrono::Utc>,
+) -> StorageResult<()> {
     match store {
-        Store::Postgres(pool) => pg::increment_transaction_attempts(pool, transaction_id, next_retry_at).await,
-        Store::Mongo(backend) => mongo::increment_transaction_attempts(&backend.database, transaction_id, next_retry_at).await,
+        Store::Postgres(pool) => {
+            pg::increment_transaction_attempts(pool, transaction_id, next_retry_at).await
+        }
+        Store::Mongo(backend) => {
+            mongo::increment_transaction_attempts(&backend.database, transaction_id, next_retry_at)
+                .await
+        }
     }
 }
 
@@ -116,7 +142,10 @@ mod pg {
     use super::{AppserviceRecord, AppserviceTransactionRecord};
     use crate::db::{StorageError, StorageResult};
 
-    pub async fn upsert_appservice(pool: &sqlx::PgPool, record: &AppserviceRecord) -> StorageResult<()> {
+    pub async fn upsert_appservice(
+        pool: &sqlx::PgPool,
+        record: &AppserviceRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO appservices (id, url, as_token, hs_token, sender_localpart, namespaces, rate_limited, protocols, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO UPDATE SET url = $2, as_token = $3, hs_token = $4, sender_localpart = $5, namespaces = $6, rate_limited = $7, protocols = $8"
         )
@@ -144,7 +173,10 @@ mod pg {
         .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_appservice_by_as_token(pool: &sqlx::PgPool, as_token: &str) -> StorageResult<AppserviceRecord> {
+    pub async fn get_appservice_by_as_token(
+        pool: &sqlx::PgPool,
+        as_token: &str,
+    ) -> StorageResult<AppserviceRecord> {
         sqlx::query_as::<_, AppserviceRecord>(
             "SELECT id, url, as_token, hs_token, sender_localpart, namespaces, rate_limited, protocols, created_at FROM appservices WHERE as_token = $1"
         )
@@ -163,7 +195,10 @@ mod pg {
         Ok(records)
     }
 
-    pub async fn create_appservice_transaction(pool: &sqlx::PgPool, txn: &AppserviceTransactionRecord) -> StorageResult<()> {
+    pub async fn create_appservice_transaction(
+        pool: &sqlx::PgPool,
+        txn: &AppserviceTransactionRecord,
+    ) -> StorageResult<()> {
         sqlx::query(
             "INSERT INTO appservice_transactions (transaction_id, appservice_id, first_stream_id, last_stream_id, payload, attempts, next_retry_at, delivered_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         )
@@ -181,7 +216,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn get_pending_transactions(pool: &sqlx::PgPool, appservice_id: &str, limit: i64) -> StorageResult<Vec<AppserviceTransactionRecord>> {
+    pub async fn get_pending_transactions(
+        pool: &sqlx::PgPool,
+        appservice_id: &str,
+        limit: i64,
+    ) -> StorageResult<Vec<AppserviceTransactionRecord>> {
         let records = sqlx::query_as::<_, AppserviceTransactionRecord>(
             "SELECT transaction_id, appservice_id, first_stream_id, last_stream_id, payload, attempts, next_retry_at, delivered_at, created_at FROM appservice_transactions WHERE appservice_id = $1 AND delivered_at IS NULL AND (next_retry_at IS NULL OR next_retry_at <= NOW()) ORDER BY first_stream_id LIMIT $2"
         )
@@ -192,9 +231,12 @@ mod pg {
         Ok(records)
     }
 
-    pub async fn mark_transaction_delivered(pool: &sqlx::PgPool, transaction_id: &str) -> StorageResult<()> {
+    pub async fn mark_transaction_delivered(
+        pool: &sqlx::PgPool,
+        transaction_id: &str,
+    ) -> StorageResult<()> {
         sqlx::query(
-            "UPDATE appservice_transactions SET delivered_at = NOW() WHERE transaction_id = $1"
+            "UPDATE appservice_transactions SET delivered_at = NOW() WHERE transaction_id = $1",
         )
         .bind(transaction_id)
         .execute(pool)
@@ -202,7 +244,11 @@ mod pg {
         Ok(())
     }
 
-    pub async fn increment_transaction_attempts(pool: &sqlx::PgPool, transaction_id: &str, next_retry_at: chrono::DateTime<chrono::Utc>) -> StorageResult<()> {
+    pub async fn increment_transaction_attempts(
+        pool: &sqlx::PgPool,
+        transaction_id: &str,
+        next_retry_at: chrono::DateTime<chrono::Utc>,
+    ) -> StorageResult<()> {
         sqlx::query(
             "UPDATE appservice_transactions SET attempts = attempts + 1, next_retry_at = $2 WHERE transaction_id = $1"
         )
@@ -237,10 +283,16 @@ mod mongo {
     }
 
     pub async fn get_appservice(db: &Database, id: &str) -> StorageResult<AppserviceRecord> {
-        appservices(db).find_one(doc! { "id": id }).await?.ok_or(StorageError::NotFound)
+        appservices(db)
+            .find_one(doc! { "id": id })
+            .await?
+            .ok_or(StorageError::NotFound)
     }
 
-    pub async fn get_appservice_by_as_token(db: &Database, as_token: &str) -> StorageResult<AppserviceRecord> {
+    pub async fn get_appservice_by_as_token(
+        db: &Database,
+        as_token: &str,
+    ) -> StorageResult<AppserviceRecord> {
         appservices(db)
             .find_one(doc! { "as_token": as_token })
             .await?
@@ -248,16 +300,26 @@ mod mongo {
     }
 
     pub async fn list_appservices(db: &Database) -> StorageResult<Vec<AppserviceRecord>> {
-        let cursor = appservices(db).find(doc! {}).sort(doc! { "created_at": 1 }).await?;
+        let cursor = appservices(db)
+            .find(doc! {})
+            .sort(doc! { "created_at": 1 })
+            .await?;
         Ok(cursor.try_collect().await?)
     }
 
-    pub async fn create_appservice_transaction(db: &Database, txn: &AppserviceTransactionRecord) -> StorageResult<()> {
+    pub async fn create_appservice_transaction(
+        db: &Database,
+        txn: &AppserviceTransactionRecord,
+    ) -> StorageResult<()> {
         appservice_transactions(db).insert_one(txn).await?;
         Ok(())
     }
 
-    pub async fn get_pending_transactions(db: &Database, appservice_id: &str, limit: i64) -> StorageResult<Vec<AppserviceTransactionRecord>> {
+    pub async fn get_pending_transactions(
+        db: &Database,
+        appservice_id: &str,
+        limit: i64,
+    ) -> StorageResult<Vec<AppserviceTransactionRecord>> {
         let now = chrono::Utc::now();
         let cursor = appservice_transactions(db)
             .find(doc! {
@@ -274,7 +336,10 @@ mod mongo {
         Ok(cursor.try_collect().await?)
     }
 
-    pub async fn mark_transaction_delivered(db: &Database, transaction_id: &str) -> StorageResult<()> {
+    pub async fn mark_transaction_delivered(
+        db: &Database,
+        transaction_id: &str,
+    ) -> StorageResult<()> {
         appservice_transactions(db)
             .update_one(
                 doc! { "transaction_id": transaction_id },
@@ -284,7 +349,11 @@ mod mongo {
         Ok(())
     }
 
-    pub async fn increment_transaction_attempts(db: &Database, transaction_id: &str, next_retry_at: chrono::DateTime<chrono::Utc>) -> StorageResult<()> {
+    pub async fn increment_transaction_attempts(
+        db: &Database,
+        transaction_id: &str,
+        next_retry_at: chrono::DateTime<chrono::Utc>,
+    ) -> StorageResult<()> {
         appservice_transactions(db)
             .update_one(
                 doc! { "transaction_id": transaction_id },

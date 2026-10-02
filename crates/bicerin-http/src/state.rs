@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -15,6 +17,15 @@ pub struct AppState {
     pub server_name: String,
     pub public_url: String,
     pub registration_enabled: bool,
+    pub guest_access_enabled: bool,
+    pub registration_shared_secret: Option<String>,
     pub default_room_version: String,
     pub max_upload_size: u64,
+    pub rate_limiter: Arc<crate::ratelimit::RateLimiter>,
+    pub signing_key: Arc<crate::server_keys::ServerSigningKey>,
+    pub metrics_handle: Arc<metrics_exporter_prometheus::PrometheusHandle>,
+    pub admin_api_token: Option<String>,
+    /// Single-use nonces for shared-secret registration (`/_bicerin/admin/register`).
+    pub registration_nonces: Arc<Mutex<HashMap<String, Instant>>>,
 }
+

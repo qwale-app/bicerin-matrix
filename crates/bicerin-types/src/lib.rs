@@ -2,8 +2,8 @@ pub mod ids {
     // Re-export Ruma's owned ID types for convenience. The borrowed `RoomId`/`EventId`/etc.
     // types are unsized (like `str`) and don't implement Clone/Serialize on their own, so we
     // use the owned variants everywhere we need to store an ID.
-    pub use ruma::{OwnedDeviceId, OwnedEventId, OwnedMxcUri, OwnedRoomId, OwnedUserId};
     pub use ruma::{DeviceId, EventId, MxcUri, RoomId, UserId};
+    pub use ruma::{OwnedDeviceId, OwnedEventId, OwnedMxcUri, OwnedRoomId, OwnedUserId};
 }
 
 pub mod events {
@@ -48,7 +48,18 @@ pub mod stream {
     use std::fmt;
     use std::ops::{Add, Sub};
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        Hash,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
     pub struct StreamPosition(pub i64);
 
     impl fmt::Display for StreamPosition {
@@ -72,12 +83,35 @@ pub mod stream {
             StreamPosition(self.0 - other)
         }
     }
-    
+
     impl Sub<StreamPosition> for StreamPosition {
         type Output = i64;
 
         fn sub(self, other: StreamPosition) -> i64 {
             self.0 - other.0
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{auth::hash_access_token, stream::StreamPosition};
+
+    #[test]
+    fn access_token_hash_uses_sha256_hex() {
+        assert_eq!(
+            hash_access_token("abc").to_string(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn stream_positions_support_arithmetic_and_ordering() {
+        let position = StreamPosition(10);
+
+        assert_eq!((position + 3).0, 13);
+        assert_eq!((position - 4).0, 6);
+        assert_eq!(position - StreamPosition(7), 3);
+        assert!(StreamPosition(7) < position);
     }
 }

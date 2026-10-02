@@ -17,9 +17,10 @@ pub async fn dispatch(store: &Store, server_name: &str, event: &EventRecord) {
         }
     };
 
-    let members = bicerin_storage::rooms::get_room_members_by_membership(store, &event.room_id, "join")
-        .await
-        .unwrap_or_default();
+    let members =
+        bicerin_storage::rooms::get_room_members_by_membership(store, &event.room_id, "join")
+            .await
+            .unwrap_or_default();
 
     for appservice in appservices {
         // Membership events (e.g. a real user inviting a not-yet-joined
@@ -31,10 +32,17 @@ pub async fn dispatch(store: &Store, server_name: &str, event: &EventRecord) {
                 bicerin_storage::appservice::owns_user(&appservice, server_name, target)
             });
 
-        let interested = bicerin_storage::appservice::owns_user(&appservice, server_name, &event.sender)
-            || bicerin_storage::appservice::namespace_matches(&appservice.namespaces, "rooms", &event.room_id)
-            || targets_owned_user
-            || members.iter().any(|m| bicerin_storage::appservice::owns_user(&appservice, server_name, &m.user_id));
+        let interested =
+            bicerin_storage::appservice::owns_user(&appservice, server_name, &event.sender)
+                || bicerin_storage::appservice::namespace_matches(
+                    &appservice.namespaces,
+                    "rooms",
+                    &event.room_id,
+                )
+                || targets_owned_user
+                || members.iter().any(|m| {
+                    bicerin_storage::appservice::owns_user(&appservice, server_name, &m.user_id)
+                });
 
         if !interested {
             continue;
@@ -53,7 +61,9 @@ pub async fn dispatch(store: &Store, server_name: &str, event: &EventRecord) {
             created_at: chrono::Utc::now(),
         };
 
-        if let Err(e) = bicerin_storage::appservice::create_appservice_transaction(store, &record).await {
+        if let Err(e) =
+            bicerin_storage::appservice::create_appservice_transaction(store, &record).await
+        {
             tracing::warn!(error = %e, appservice_id = %appservice.id, "failed to enqueue appservice transaction");
         }
     }

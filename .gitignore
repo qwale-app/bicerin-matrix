@@ -21,9 +21,16 @@ TESTING.md
 DOCS.md
 BICERIN_MATRIX_API.md
 NOT_TESTED.txt
+MAUTRIX_TESTING.txt
 designplan.txt
 todo.txt
 
 # Local MongoDB test credentials and runtime data
 .env.local
 .local-data/
+
+# Server signing key (generated on first startup, see bicerin-http::server_keys)
+# and any mautrix bridge registration/config files kept inside the repo tree.
+signing.key
+registration*.yaml
+mautrix-*-data/

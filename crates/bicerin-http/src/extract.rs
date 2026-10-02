@@ -14,7 +14,10 @@ pub struct AuthUser {
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = BicerinError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let token = extract_token(parts).ok_or_else(|| BicerinError::MatrixError {
             errcode: "M_MISSING_TOKEN".to_string(),
             error: "Missing access token".to_string(),
@@ -24,8 +27,15 @@ impl FromRequestParts<AppState> for AuthUser {
         // AuthService::authenticate for identity assertion.
         let requested_user_id = extract_query_param(parts, "user_id");
 
-        let (user_id, device_id) = state.auth.authenticate(&token, requested_user_id.as_deref()).await?;
-        Ok(AuthUser { user_id, device_id, access_token: token })
+        let (user_id, device_id) = state
+            .auth
+            .authenticate(&token, requested_user_id.as_deref())
+            .await?;
+        Ok(AuthUser {
+            user_id,
+            device_id,
+            access_token: token,
+        })
     }
 }
 
@@ -52,4 +62,58 @@ fn extract_query_param(parts: &Parts, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Extractor guarding the `/_bicerin/admin/*` API. Requires
+/// `Authorization: Bearer <admin.api_token>`; the whole admin API is
+/// disabled (every request rejected) if no token is configured.
+pub struct AdminAuth;
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for AdminAuth {
+    type Rejection = BicerinError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(expected) = state.admin_api_token.as_deref() else {
+            return Err(BicerinError::NotFound);
+        };
+        let provided = extract_token(parts).ok_or(BicerinError::Unauthorized)?;
+        if provided != expected {
+            return Err(BicerinError::Unauthorized);
+        }
+        Ok(AdminAuth)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_query_param, extract_token};
+    use axum::http::{header, Request};
+
+    #[test]
+    fn bearer_header_takes_precedence_over_query_token() {
+        let request = Request::builder()
+            .uri("/_matrix/client/v3/sync?access_token=query-token")
+            .header(header::AUTHORIZATION, "Bearer header-token")
+            .body(())
+            .expect("valid request");
+        let (parts, _) = request.into_parts();
+
+        assert_eq!(extract_token(&parts), Some("header-token".to_string()));
+    }
+
+    #[test]
+    fn access_token_can_be_read_from_the_legacy_query_parameter() {
+        let request = Request::builder()
+            .uri("/_matrix/client/v3/sync?since=s12&access_token=query-token")
+            .body(())
+            .expect("valid request");
+        let (parts, _) = request.into_parts();
+
+        assert_eq!(extract_token(&parts), Some("query-token".to_string()));
+        assert_eq!(extract_query_param(&parts, "user_id"), None);
+    }
 }

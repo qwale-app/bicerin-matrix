@@ -1,6 +1,7 @@
-pub mod service;
 pub mod filter;
-pub mod token;
+pub mod device_lists;
+pub mod service;
 pub mod subscriptions;
+pub mod token;
 
 pub use service::SyncService;

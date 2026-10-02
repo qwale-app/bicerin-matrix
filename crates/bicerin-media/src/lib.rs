@@ -19,7 +19,12 @@ pub struct MediaService {
 }
 
 impl MediaService {
-    pub fn new(store: bicerin_storage::Store, root: impl AsRef<Path>, server_name: String, max_upload_size: u64) -> Self {
+    pub fn new(
+        store: bicerin_storage::Store,
+        root: impl AsRef<Path>,
+        server_name: String,
+        max_upload_size: u64,
+    ) -> Self {
         Self {
             store,
             root: root.as_ref().to_path_buf(),
@@ -41,12 +46,7 @@ impl MediaService {
         upload_name: Option<String>,
         bytes: Vec<u8>,
     ) -> BicerinResult<String> {
-        if bytes.len() as u64 > self.max_upload_size {
-            return Err(BicerinError::MatrixError {
-                errcode: "M_TOO_LARGE".to_string(),
-                error: "Upload exceeds maximum allowed size".to_string(),
-            });
-        }
+        validate_upload_size(bytes.len() as u64, self.max_upload_size)?;
 
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -88,7 +88,11 @@ impl MediaService {
         Ok(media_id)
     }
 
-    pub async fn download(&self, server_name: &str, media_id: &str) -> BicerinResult<(MediaRecord, Vec<u8>)> {
+    pub async fn download(
+        &self,
+        server_name: &str,
+        media_id: &str,
+    ) -> BicerinResult<(MediaRecord, Vec<u8>)> {
         let record = bicerin_storage::media::get_media(&self.store, server_name, media_id)
             .await
             .map_err(|_| BicerinError::NotFound)?;
@@ -102,8 +106,39 @@ impl MediaService {
     }
 }
 
+fn validate_upload_size(size_bytes: u64, max_upload_size: u64) -> BicerinResult<()> {
+    if size_bytes > max_upload_size {
+        return Err(BicerinError::MatrixError {
+            errcode: "M_TOO_LARGE".to_string(),
+            error: "Upload exceeds maximum allowed size".to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn generate_media_id() -> String {
     use rand::Rng;
     let bytes: Vec<u8> = (0..24).map(|_| rand::thread_rng().gen()).collect();
     hex::encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_upload_size;
+    use bicerin_error::BicerinError;
+
+    #[test]
+    fn upload_size_limit_accepts_the_boundary_and_smaller_payloads() {
+        assert!(validate_upload_size(0, 10).is_ok());
+        assert!(validate_upload_size(9, 10).is_ok());
+        assert!(validate_upload_size(10, 10).is_ok());
+    }
+
+    #[test]
+    fn upload_size_limit_returns_matrix_too_large_for_oversized_payloads() {
+        assert!(matches!(
+            validate_upload_size(11, 10),
+            Err(BicerinError::MatrixError { errcode, .. }) if errcode == "M_TOO_LARGE"
+        ));
+    }
 }
