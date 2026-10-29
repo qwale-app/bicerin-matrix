@@ -68,7 +68,9 @@ jobs:
 
       - name: Verify deployment identity
         shell: bash
-        run: ssh-keygen -lf "$HOME/.ssh/id_ed25519"
+        run: |
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" > "$RUNNER_TEMP/deploy-key.pub"
+          ssh-keygen -lf "$RUNNER_TEMP/deploy-key.pub"
 
       - name: Upload and activate release
         shell: bash
