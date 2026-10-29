@@ -3,6 +3,12 @@ name: Deploy published release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to deploy
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -29,12 +35,12 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -60,15 +66,19 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Verify deployment identity
+        shell: bash
+        run: ssh-keygen -lf "$HOME/.ssh/id_ed25519"
+
       - name: Upload and activate release
         shell: bash
         run: |
-          ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             "bicerin@$DEPLOY_HOST" "mkdir -p /opt/bicerin/releases/$RELEASE_TAG"
-          rsync -az --chmod=F755 -e "ssh -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
+          rsync -az --chmod=F755 -e "ssh -i $HOME/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
             target/release/bicerin-server \
             "bicerin@$DEPLOY_HOST:/opt/bicerin/releases/$RELEASE_TAG/bicerin-server"
-          ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
+          ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             "bicerin@$DEPLOY_HOST" \
             "ln -sfn /opt/bicerin/releases/$RELEASE_TAG /opt/bicerin/current && \
              sudo systemctl restart bicerin && \
