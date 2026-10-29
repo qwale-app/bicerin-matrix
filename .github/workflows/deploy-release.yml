@@ -1,0 +1,77 @@
+name: Deploy published release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-24.04
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})' --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BICERIN_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test release source
+        run: cargo test --workspace --locked -- --include-ignored
+
+      - name: Build release binary
+        run: cargo build --locked --release -p bicerin-server
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[0-9A-Za-z._-]+$ ]] ||
+            { echo "Release tag contains unsupported deployment-path characters"; exit 1; }
+
+      - name: Configure SSH host verification
+        shell: bash
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload and activate release
+        shell: bash
+        run: |
+          ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
+            "bicerin@$DEPLOY_HOST" "mkdir -p /opt/bicerin/releases/$RELEASE_TAG"
+          rsync -az --chmod=F755 -e "ssh -i $HOME/.ssh/id_ed25519 -o StrictHostKeyChecking=yes" \
+            target/release/bicerin-server \
+            "bicerin@$DEPLOY_HOST:/opt/bicerin/releases/$RELEASE_TAG/bicerin-server"
+          ssh -i "$HOME/.ssh/id_ed25519" -o StrictHostKeyChecking=yes \
+            "bicerin@$DEPLOY_HOST" \
+            "ln -sfn /opt/bicerin/releases/$RELEASE_TAG /opt/bicerin/current && \
+             sudo systemctl restart bicerin && \
+             sudo systemctl is-active --quiet bicerin && \
+             curl --fail --silent --show-error --max-time 15 \
+               http://127.0.0.1:8448/_matrix/client/versions >/dev/null"

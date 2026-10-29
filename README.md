@@ -137,3 +137,9 @@ curl -X POST http://localhost:8448/_matrix/client/v3/register `
   -d '{\"username\":\"alice\",\"password\":\"correct horse battery staple\"}'
 # -> 401 with a UIA challenge; re-send with "auth": {"type": "m.login.dummy"}
 ```
+
+## Deployment
+
+For a production deployment using a DigitalOcean Droplet, MongoDB Atlas,
+Caddy-managed TLS, and GitHub Release-triggered CI/CD, see
+[DigitalOcean and MongoDB Atlas deployment](DEPLOYMENT_DIGITALOCEAN_ATLAS.md).
