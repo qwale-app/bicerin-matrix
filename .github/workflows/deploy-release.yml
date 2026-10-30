@@ -81,9 +81,23 @@ jobs:
             target/release/bicerin-server \
             "bicerin@$DEPLOY_HOST:/opt/bicerin/releases/$RELEASE_TAG/bicerin-server"
           ssh -i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "bicerin@$DEPLOY_HOST" \
-            "ln -sfn /opt/bicerin/releases/$RELEASE_TAG /opt/bicerin/current && \
-             sudo systemctl restart bicerin && \
-             sudo systemctl is-active --quiet bicerin && \
-             curl --fail --silent --show-error --max-time 15 \
-               http://127.0.0.1:8448/_matrix/client/versions >/dev/null"
+            "bicerin@$DEPLOY_HOST" "RELEASE_TAG='$RELEASE_TAG' bash -s" <<'REMOTE_SCRIPT'
+          set -eu
+          ln -sfn "/opt/bicerin/releases/$RELEASE_TAG" /opt/bicerin/current
+          sudo systemctl restart bicerin
+
+          attempt=1
+          while [ "$attempt" -le 30 ]; do
+            if curl --fail --silent --show-error --max-time 5 \
+              http://127.0.0.1:8448/_matrix/client/versions >/dev/null; then
+              exit 0
+            fi
+
+            sudo systemctl is-active --quiet bicerin || exit 1
+            sleep 2
+            attempt=$((attempt + 1))
+          done
+
+          echo "Bicerin did not become ready within 60 seconds." >&2
+          exit 1
+          REMOTE_SCRIPT
