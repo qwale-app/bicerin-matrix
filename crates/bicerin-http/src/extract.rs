@@ -52,16 +52,8 @@ fn extract_token(parts: &Parts) -> Option<String> {
 }
 
 fn extract_query_param(parts: &Parts, name: &str) -> Option<String> {
-    let query = parts.uri.query()?;
-    for pair in query.split('&') {
-        let mut kv = pair.splitn(2, '=');
-        if let (Some(key), Some(value)) = (kv.next(), kv.next()) {
-            if key == name {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
+    url::form_urlencoded::parse(parts.uri.query()?.as_bytes())
+        .find_map(|(key, value)| (key == name).then(|| value.into_owned()))
 }
 
 /// Extractor guarding the `/_bicerin/admin/*` API. Requires
@@ -115,5 +107,19 @@ mod tests {
 
         assert_eq!(extract_token(&parts), Some("query-token".to_string()));
         assert_eq!(extract_query_param(&parts, "user_id"), None);
+    }
+
+    #[test]
+    fn query_parameters_are_percent_decoded() {
+        let request = Request::builder()
+            .uri("/_matrix/client/v3/account/whoami?user_id=%40instagrambot%3Amatrix.mokachat.app")
+            .body(())
+            .expect("valid request");
+        let (parts, _) = request.into_parts();
+
+        assert_eq!(
+            extract_query_param(&parts, "user_id"),
+            Some("@instagrambot:matrix.mokachat.app".to_string())
+        );
     }
 }
